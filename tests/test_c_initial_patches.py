@@ -8,6 +8,14 @@ from pathlib import Path
 from conftest import BIN_DIR, run_wrapper
 
 
+def test_027_html_inline_js_detection_present() -> None:
+    """TESTS.md #27 — Le wrapper détecte le JS inline HTML (HAS_HTML_INLINE_JS + extraction Python)."""
+    code = (BIN_DIR / "client-audit-code").read_text()
+    assert "HAS_HTML_INLINE_JS" in code, "détection JS inline HTML absente (régression chunk 27)"
+    assert "<script" in code, "regex extraction <script> absente"
+    assert "eslint-inline" in code, "block run_tool eslint-inline absent"
+
+
 def test_026_semgrep_no_quiet_in_wrapper() -> None:
     """TESTS.md #26 — Le wrapper client-audit-code n'utilise PAS '--quiet' avec semgrep.
 
