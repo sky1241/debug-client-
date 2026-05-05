@@ -155,3 +155,9 @@ def test_036_eslint_inline_present(rosetta_audit: Path) -> None:
     # Soit eslint, soit eslint-inline, soit les deux ont une trace
     has_eslint = (manifest_dir / "eslint.line").exists() or (manifest_dir / "eslint-inline.line").exists()
     assert has_eslint, "ni eslint ni eslint-inline dans manifests"
+
+
+def test_037_phpstan_detects_undefined_var(rosetta_audit: Path) -> None:
+    """TESTS.md #37 — phpstan détecte la variable PHP indéfinie."""
+    out = (rosetta_audit / "phpstan.out").read_text(errors="ignore")
+    assert "undef" in out.lower() or "Variable" in out, f"phpstan rien:\n{out[:400]}"
