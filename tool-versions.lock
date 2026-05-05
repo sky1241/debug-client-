@@ -1,6 +1,6 @@
 # Lock des versions outils SAST/secrets/IaC validés sur cette stack.
 # Auto-généré par audit-doctor --bump. Format : <tool>=<version>
-# Date génération : 2026-05-05T16:14:33+02:00
+# Date génération : 2026-05-05T16:16:42+02:00
 
 bandit=1.7.10
 gosec=dev

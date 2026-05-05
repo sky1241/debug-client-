@@ -128,6 +128,43 @@ if [ "$EXTERNAL_SYMLINKS" -gt 5 ]; then
   echo "  ⚠ ... (total: $EXTERNAL_SYMLINKS symlinks externes — tous exclus)"
 fi
 
+# Détection zipbomb / archives à ratio anormal
+AUDIT_MAX_ZIP_RATIO="${AUDIT_MAX_ZIP_RATIO:-100}"
+SUSPICIOUS_ARCHIVES=0
+while IFS= read -r archive; do
+  [ -z "$archive" ] && continue
+  case "$archive" in
+    *.zip|*.jar|*.war)
+      if command -v unzip >/dev/null; then
+        compressed=$(stat -c%s "$archive" 2>/dev/null || echo 0)
+        uncompressed=$(unzip -l "$archive" 2>/dev/null | tail -1 | awk '{print $1}')
+        if [ -n "$uncompressed" ] && [ "$compressed" -gt 1024 ] 2>/dev/null; then
+          ratio=$(( uncompressed / compressed ))
+          if [ "$ratio" -gt "$AUDIT_MAX_ZIP_RATIO" ]; then
+            echo "  ⚠ Archive zipbomb suspectée : $archive (ratio ${ratio}x, seuil ${AUDIT_MAX_ZIP_RATIO}x)"
+            SUSPICIOUS_ARCHIVES=$((SUSPICIOUS_ARCHIVES + 1))
+          fi
+        fi
+      fi
+      ;;
+    *.tar.gz|*.tgz|*.tar.bz2|*.tbz2|*.tar.xz|*.txz|*.7z|*.rar)
+      # Pas d'extraction sans outil dédié — juste warning
+      echo "  ℹ Archive compressée détectée (non-analysable sans extraction) : $archive"
+      ;;
+  esac
+done < <(find "$TARGET" -maxdepth 30 -type f \( -name "*.zip" -o -name "*.jar" -o -name "*.war" \
+         -o -name "*.tar.gz" -o -name "*.tgz" -o -name "*.tar.bz2" -o -name "*.tbz2" \
+         -o -name "*.tar.xz" -o -name "*.txz" -o -name "*.7z" -o -name "*.rar" \) 2>/dev/null)
+
+if [ "$SUSPICIOUS_ARCHIVES" -gt 0 ]; then
+  echo "  ⚠ $SUSPICIOUS_ARCHIVES archive(s) potentiellement zipbomb"
+  if [ "${AUDIT_REJECT_ZIPBOMB:-0}" = "1" ]; then
+    echo "  ✗ AUDIT_REJECT_ZIPBOMB=1 → refus" >&2
+    exit 2
+  fi
+  echo "  ℹ AUDIT_REJECT_ZIPBOMB=1 pour refuser au lieu de warn"
+fi
+
 echo "  ✓ pre-check OK ($SOURCE_FILES fichiers, ${SOURCE_SIZE_MB} MiB)"
 
 # ─── 1b. Snapshot dans /tmp ─────────────────────────────────────────────
