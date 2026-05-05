@@ -8,6 +8,16 @@ from pathlib import Path
 from conftest import BIN_DIR, run_wrapper
 
 
+def test_031_post_patches_audit_works(tmp_path: Path) -> None:
+    """TESTS.md #31 — Re-test client-audit-code post-patches : audit-code tourne sans crash."""
+    site = tmp_path / "mini-site"
+    site.mkdir()
+    (site / "index.html").write_text("<html><script>var x=1;</script></html>")
+    p = run_wrapper("client-audit-code", str(site), timeout=120)
+    out = p.stdout + p.stderr
+    assert "AUDIT TERMINÉ" in out, f"audit pas terminé:\n{out[-400:]}"
+
+
 def test_030_shellcheck_severity_info(tmp_path: Path) -> None:
     """TESTS.md #30 — Le wrapper invoque shellcheck en `--severity=info` (détecte SC2086)."""
     code = (BIN_DIR / "client-audit-code").read_text()
