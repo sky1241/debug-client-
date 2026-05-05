@@ -131,3 +131,21 @@ def test_035_eslint_ts_parser_works(tmp_path: Path) -> None:
     log_dir = audit_rosetta(tmp_path)
     out = (log_dir / "eslint.out").read_text(errors="ignore")
     assert "bad.ts" in out, f"bad.ts non analysé (parser TS cassé ?):\n{out[:400]}"
+
+
+def test_036_eslint_inline_extracts_html_js(tmp_path: Path) -> None:
+    """TESTS.md #36 — Sur un repo sans .js mais avec HTML inline, eslint-inline tourne."""
+    repo = tmp_path / "html-only"
+    repo.mkdir()
+    (repo / "page.html").write_text(
+        "<html><head>"
+        "<script type='application/ld+json'>{\"a\":1}</script>"
+        "<script>function bad(x){eval(x);}</script>"
+        "</head><body>x</body></html>"
+    )
+    p = run_wrapper("client-audit-code", str(repo), timeout=120)
+    out = p.stdout + p.stderr
+    assert "AUDIT TERMINÉ" in out
+    log_dir = sorted((Path.home() / "audit-logs" / repo.name).glob("*"))[-1]
+    inline_out = log_dir / "eslint-inline.out"
+    assert inline_out.exists(), f"eslint-inline.out absent — branche inline pas activée"
