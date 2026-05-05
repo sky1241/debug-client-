@@ -87,6 +87,18 @@ def test_018_nikto_runs(http_server: int) -> None:
     assert "Server:" in out, f"output incomplet:\n{out[-300:]}"
 
 
+def test_019_gobuster_finds_index(http_server: int, tmp_path: Path) -> None:
+    """TESTS.md #19 — `gobuster dir` trouve `index.html` sur le HTTP server."""
+    wl = tmp_path / "wl.txt"
+    wl.write_text("index.html\nrobots.txt\nfoo\nbar\n")
+    p = subprocess.run(
+        ["gobuster", "dir", "-u", f"http://127.0.0.1:{http_server}",
+         "-w", str(wl), "-q", "-t", "20", "--no-error"],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert "index.html" in p.stdout, f"gobuster n'a pas trouvé index.html:\n{p.stdout[-300:]}"
+
+
 
 
 def test_016_http_server_serves_repo(http_server: int) -> None:
