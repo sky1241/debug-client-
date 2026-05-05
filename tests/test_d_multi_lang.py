@@ -110,3 +110,10 @@ def test_032_bandit_detects_python_vulns(tmp_path: Path) -> None:
     out = (log_dir / "bandit.out").read_text(errors="ignore")
     found = [c for c in ("B307", "B403", "B602") if c in out]
     assert found, f"aucun pattern bandit trouvé:\n{out[:600]}"
+
+
+def test_033_gosec_detects_md5(tmp_path: Path) -> None:
+    """TESTS.md #33 — gosec détecte G401 (MD5 weak crypto) sur bad.go."""
+    log_dir = audit_rosetta(tmp_path)
+    out = (log_dir / "gosec.out").read_text(errors="ignore")
+    assert "G401" in out, f"G401 non détecté:\n{out[:400]}"
