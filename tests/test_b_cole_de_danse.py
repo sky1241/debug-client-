@@ -112,6 +112,17 @@ def test_020_prod_headers_github_pages() -> None:
         f"signature GitHub Pages absente:\n{out[:400]}"
 
 
+def test_021_prod_blocks_git_head() -> None:
+    """TESTS.md #21 — `haoyanwuying.com/.git/HEAD` retourne 404 (prod safe)."""
+    p = subprocess.run(
+        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+         "-L", "--max-time", "10", "https://haoyanwuying.com/.git/HEAD"],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert p.returncode == 0, f"curl exit {p.returncode}"
+    assert p.stdout.strip() == "404", f"prod expose .git/HEAD ! code={p.stdout!r}"
+
+
 
 
 def test_016_http_server_serves_repo(http_server: int) -> None:
