@@ -7,23 +7,42 @@ set -euo pipefail
 
 usage() {
   cat <<EOF
-Usage: client-audit-code <chemin-dossier> [--replay] [--keep]
-  --replay  : mode reproductible — pas de yield mining, log verbeux
-  --keep    : ne supprime pas la copie locale après audit
+Usage: client-audit-code <chemin-dossier> [options]
+  --replay        : mode reproductible — pas de yield mining, log verbeux
+  --keep          : ne supprime pas la copie locale après audit
+  --format=FMT    : md (default), json, all (md+json à côté)
+  --json          : alias --format=json
+
+Variables d'environnement :
+  AUDIT_PARALLEL=1|0           parallélisation des outils (default 1)
+  AUDIT_TOOL_TIMEOUT=N         timeout par outil en secondes (default 300)
+  AUDIT_SANDBOX=1|0            firejail (default 0 ; 1 = recommandé pour code non-confiance)
+  AUDIT_OFFLINE=1|0            --net=none + skip outils online (default 0)
+  AUDIT_MAX_FILES=N            limite anti-bomb (default 50000)
+  AUDIT_MAX_TOTAL_SIZE_MB=N    limite anti-bomb taille (default 1024)
+  AUDIT_MAX_FILE_SIZE=10M      rsync --max-size (default 50M)
 EOF
 }
 
 TARGET=""
 REPLAY=0
 KEEP=0
+FORMAT="md"  # md|json|all
 for arg in "$@"; do
   case "$arg" in
     --replay) REPLAY=1 ;;
     --keep)   KEEP=1 ;;
+    --format=*) FORMAT="${arg#--format=}" ;;
+    --json) FORMAT="json" ;;
     -h|--help) usage; exit 0 ;;
     *) TARGET="$arg" ;;
   esac
 done
+
+case "$FORMAT" in
+  md|json|all) : ;;
+  *) echo "ERREUR: --format=$FORMAT inconnu (md|json|all)" >&2; exit 1 ;;
+esac
 
 [ -n "$TARGET" ] || { usage; exit 1; }
 [ -d "$TARGET" ] || { echo "ERREUR: $TARGET n'est pas un dossier" >&2; exit 1; }
@@ -34,6 +53,7 @@ CLIENT_NAME="$(basename "$TARGET")"
 DATE_TAG="$(date +%Y-%m-%d-%H%M%S)"
 WORKDIR="/tmp/audit-${CLIENT_NAME}-${DATE_TAG}"
 REPORT_PATH="${TARGET}/audit-claude-${DATE_TAG}.md"
+JSON_REPORT_PATH="${TARGET}/audit-claude-${DATE_TAG}.json"
 LOG_DIR="$HOME/audit-logs/${CLIENT_NAME}/${DATE_TAG}"
 
 mkdir -p "$LOG_DIR"
@@ -745,6 +765,56 @@ Tout l'audit (fingerprint, sorties outils, run.log) est dans :
 ---
 *Généré par client-audit-code v1.0 — Claude on ludo-pc-1*
 EOF
+
+# ─── 5b. Sortie JSON (si --format=json|all) ────────────────────────────
+if [ "$FORMAT" = "json" ] || [ "$FORMAT" = "all" ]; then
+  echo "  → JSON : $JSON_REPORT_PATH"
+  python3 - "$JSON_REPORT_PATH" "$CLIENT_NAME" "$TARGET" "$INPUT_HASH" "$TOTAL_FILES" "$TOTAL_SIZE" \
+    "$AUDIT_PARALLEL" "$AUDIT_TOOL_TIMEOUT" "$AUDIT_SANDBOX" "$AUDIT_OFFLINE" "$LOG_DIR" \
+    "${TOOL_RESULTS[@]}" <<'PYEOF'
+import json, sys, datetime, os
+out, client, target, sha, files, size, par, to, sb, off, log_dir, *results = sys.argv[1:]
+tools = []
+for r in results:
+    parts = r.split("|")
+    if len(parts) < 5: continue
+    name, status, reason, findings, outfile = parts[:5]
+    entry = {"name": name, "status": status}
+    if reason and reason != "-": entry["reason"] = reason
+    if findings and findings != "-": entry["findings_summary"] = findings
+    if outfile and outfile != "-" and os.path.exists(outfile):
+        entry["out_file"] = outfile
+        entry["out_size_bytes"] = os.path.getsize(outfile)
+    tools.append(entry)
+data = {
+    "schema": "claude-audit-code/v1",
+    "generated_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    "client": {"name": client, "target": target},
+    "input_hash_sha256": sha,
+    "snapshot": {"total_files": int(files), "total_size_human": size},
+    "options": {
+        "parallel": par == "1",
+        "tool_timeout_seconds": int(to),
+        "sandbox": sb == "1",
+        "offline": off == "1",
+    },
+    "log_dir": log_dir,
+    "tool_count_total": len(tools),
+    "tool_count_lancé": sum(1 for t in tools if t["status"] == "LANCÉ"),
+    "tool_count_skippé": sum(1 for t in tools if t["status"] == "SKIPPÉ"),
+    "tool_count_timeout": sum(1 for t in tools if t["status"] == "TIMEOUT"),
+    "tools": tools,
+}
+with open(out, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+print(f"  ✓ JSON écrit ({os.path.getsize(out)} octets, {len(tools)} outils)")
+PYEOF
+fi
+
+# Si --format=json (seul), supprimer le .md (utilisateur ne veut que JSON)
+if [ "$FORMAT" = "json" ]; then
+  rm -f "$REPORT_PATH"
+fi
 
 # ─── 6. Cleanup ────────────────────────────────────────────────────────
 echo ""
