@@ -8,6 +8,22 @@ from pathlib import Path
 from conftest import BIN_DIR, run_wrapper
 
 
+def test_026_semgrep_no_quiet_in_wrapper() -> None:
+    """TESTS.md #26 — Le wrapper client-audit-code n'utilise PAS '--quiet' avec semgrep.
+
+    Le bug initial : semgrep --quiet supprime l'output texte → rapport vide.
+    Le patch retire --quiet et ajoute --disable-version-check.
+    """
+    code = (BIN_DIR / "client-audit-code").read_text()
+    # Cherche la ligne qui invoque semgrep
+    semgrep_line = re.search(r"semgrep scan[^\"]*", code)
+    assert semgrep_line, "ligne 'semgrep scan' introuvable dans client-audit-code"
+    line = semgrep_line.group(0)
+    assert "--quiet" not in line, f"--quiet présent (régression chunk 26): {line}"
+    assert "--disable-version-check" in line, \
+        f"--disable-version-check absent (patch chunk 26): {line}"
+
+
 def test_025_fingerprint_loopback_and_link_local() -> None:
     """TESTS.md #25 — patch regex IP : 127.0.0.0/8 + 169.254.0.0/16 reconnus."""
     cases = [
