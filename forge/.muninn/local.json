@@ -1,0 +1,20 @@
+{
+  "version": "v0.1",
+  "repo_name": ".forge",
+  "domain": ".forge",
+  "generated": "2026-04-04 04:05:40",
+  "entries": 11,
+  "encode": {
+    "duration": "→",
+    "passed": "←",
+    "failed": "×",
+    "errors": "∂",
+    "total": "a0",
+    "date": "a1",
+    "2026": "a2",
+    "350,": "a3",
+    "## ": "",
+    "**": "",
+    "- ": ""
+  }
+}
