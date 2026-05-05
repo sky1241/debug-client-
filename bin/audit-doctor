@@ -46,7 +46,7 @@ get_version() {
     yamllint)      yamllint --version 2>&1 | awk '{print $2}' ;;
     semgrep)       semgrep --version 2>&1 | head -1 ;;
     trufflehog3)   trufflehog3 --version 2>&1 | head -1 | awk '{print $NF}' ;;
-    gitleaks)      gitleaks version 2>&1 | head -1 | awk '{print $NF}' ;;
+    gitleaks)      dpkg -l gitleaks 2>/dev/null | tail -1 | awk '{print $3}' | sed 's/-.*//' ;;
     trivy)         trivy --version 2>&1 | head -1 | awk '{print $2}' ;;
     pip-audit)     "$HOME/.local/bin/pip-audit" --version 2>&1 | head -1 | awk '{print $2}' ;;
     retire)        retire --version 2>&1 | head -1 ;;
