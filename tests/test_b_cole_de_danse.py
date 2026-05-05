@@ -29,3 +29,15 @@ def test_011_repo_findable_via_github_api() -> None:
         data = json.loads(resp.read())
     assert data.get("name") == "-cole-de-danse"
     assert data.get("private") is False, "repo doit être public"
+
+
+def test_012_git_clone_works(tmp_path: Path) -> None:
+    """TESTS.md #12 — `git clone` récupère le repo (index.html + .git/ présents)."""
+    target = tmp_path / "clone"
+    p = subprocess.run(
+        ["git", "clone", "--depth=1", COLE_REPO_URL, str(target)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert p.returncode == 0, f"clone failed: {p.stderr[-300:]}"
+    assert (target / "index.html").is_file()
+    assert (target / ".git").is_dir()
