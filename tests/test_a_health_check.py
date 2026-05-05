@@ -49,6 +49,29 @@ def test_002_repo_wrappers_present() -> None:
     assert not issues, f"wrappers en problème: {issues}"
 
 
+def test_008_client_mount_dir_exists() -> None:
+    """TESTS.md #8 — Le dossier `~/clients/` existe (préparé par client-mount)."""
+    clients = Path.home() / "clients"
+    assert clients.is_dir(), f"~/clients/ absent — lance `client-mount` d'abord"
+
+
+def test_009_xmrig_running() -> None:
+    """TESTS.md #9 — Le process xmrig tourne (mining ludo-PC-1)."""
+    import subprocess
+
+    p = subprocess.run(["pgrep", "-af", "xmrig"], capture_output=True, text=True, timeout=5)
+    assert p.returncode == 0 and p.stdout.strip(), \
+        f"xmrig pas trouvé via pgrep, stdout={p.stdout!r}"
+    assert "xmrig" in p.stdout.lower(), f"output suspect:\n{p.stdout[:300]}"
+
+
+def test_010_claude_channel_accessible() -> None:
+    """TESTS.md #10 — Le canal `~/linux-upgrade/MESSAGE_TO_LUDO_PC1.md` existe."""
+    msg = Path.home() / "linux-upgrade" / "MESSAGE_TO_LUDO_PC1.md"
+    assert msg.is_file(), f"canal absent: {msg}"
+    assert msg.stat().st_size > 0, f"canal vide: {msg}"
+
+
 def test_007_fingerprint_public_ip_warns() -> None:
     """TESTS.md #7 — `audit-fingerprint 8.8.8.8` warn 'IP PUBLIQUE — ordre de mission'."""
     p = run_wrapper("audit-fingerprint", "8.8.8.8", timeout=20)
