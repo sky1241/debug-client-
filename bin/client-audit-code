@@ -107,6 +107,9 @@ PYEOF
 fi
 HAS_DOCKERFILE=$(find "$SRC" -name "Dockerfile*" -type f -print -quit 2>/dev/null)
 HAS_K8S=$(find "$SRC" \( -name "*.yaml" -o -name "*.yml" \) -type f -exec grep -l "apiVersion:" {} \; 2>/dev/null | head -1)
+HAS_TF=$(find "$SRC" \( -name "*.tf" -o -name "*.tfvars" \) -type f -print -quit 2>/dev/null)
+HAS_HELM=$(find "$SRC" -name "Chart.yaml" -type f -print -quit 2>/dev/null)
+HAS_IAC=$([ -n "$HAS_DOCKERFILE$HAS_K8S$HAS_TF$HAS_HELM" ] && echo "yes" || echo "")
 HAS_PACKAGE_JSON=$(find "$SRC" -name "package.json" -not -path "*/node_modules/*" -type f -print -quit 2>/dev/null)
 HAS_REQUIREMENTS=$(find "$SRC" -name "requirements.txt" -type f -print -quit 2>/dev/null)
 HAS_PYPROJECT=$(find "$SRC" -name "pyproject.toml" -not -path "*/.venv/*" -not -path "*/venv/*" -type f -print -quit 2>/dev/null)
@@ -123,6 +126,7 @@ HAS_JAVA=$(find "$SRC" -name "*.java" -type f -print -quit 2>/dev/null)
 HAS_C_CPP=$(find "$SRC" \( -name "*.c" -o -name "*.cpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.h" -o -name "*.hpp" \) -type f -print -quit 2>/dev/null)
 HAS_SHELL=$(find "$SRC" \( -name "*.sh" -o -name "*.bash" \) -type f -print -quit 2>/dev/null)
 HAS_YAML_ANY=$(find "$SRC" \( -name "*.yml" -o -name "*.yaml" \) ! -path "*/node_modules/*" ! -path "*/.git/*" -type f -print -quit 2>/dev/null)
+HAS_ANY_LOCK=$([ -n "$HAS_PACKAGE_JSON$HAS_REQUIREMENTS$HAS_PYPROJECT$HAS_GO_MOD$HAS_GEMFILE_LOCK$HAS_CARGO_LOCK" ] && echo "yes" || echo "")
 HAS_BIN=$(find "$SRC" -type f -executable -size +1k \
   ! -path "*/.git/*" \
   ! -name "*.sh" ! -name "*.py" ! -name "*.js" ! -name "*.ts" ! -name "*.html" ! -name "*.htm" \
@@ -488,6 +492,63 @@ if [ -n "$HAS_REQUIREMENTS$HAS_PYPROJECT" ]; then
   fi
 else
   skip_tool "pip-audit" "pas de requirements.txt ni pyproject.toml"
+fi
+
+# osv-scanner — multi-écosystèmes deps (unifie pip-audit/bundler-audit/cargo-audit/npm/maven/etc.)
+if [ -n "$HAS_ANY_LOCK" ]; then
+  OSVSCAN="${HOME}/go/bin/osv-scanner"
+  [ -x "$OSVSCAN" ] || OSVSCAN="$(command -v osv-scanner 2>/dev/null || true)"
+  if [ -n "$OSVSCAN" ] && [ -x "$OSVSCAN" ]; then
+    run_tool "osv-scanner" "'$OSVSCAN' scan source --recursive '$SRC' 2>&1 || true"
+  else
+    skip_tool "osv-scanner" "binaire absent"
+  fi
+else
+  skip_tool "osv-scanner" "aucun lockfile détecté"
+fi
+
+# checkov — IaC scan (Terraform / K8s / Helm / Dockerfile / CloudFormation)
+if [ -n "$HAS_IAC" ]; then
+  if command -v checkov >/dev/null; then
+    run_tool "checkov" "checkov -d '$SRC' --quiet --compact --output cli --framework terraform,kubernetes,helm,dockerfile,cloudformation 2>&1 || true"
+  else
+    skip_tool "checkov" "binaire absent"
+  fi
+else
+  skip_tool "checkov" "aucun fichier IaC détecté (Terraform/K8s/Helm/Dockerfile)"
+fi
+
+# syft — génération SBOM (CycloneDX)
+if [ -n "$HAS_ANY_LOCK$HAS_DOCKERFILE" ]; then
+  if command -v syft >/dev/null; then
+    run_tool "syft" "syft scan '$SRC' --output cyclonedx-json='$LOG_DIR/sbom.cdx.json' --output table 2>&1 || true"
+  else
+    skip_tool "syft" "binaire absent"
+  fi
+else
+  skip_tool "syft" "aucun lockfile/Dockerfile pour SBOM"
+fi
+
+# grype — scan CVE direct sur les sources (parallèle-safe, ne dépend pas du SBOM syft)
+if [ -n "$HAS_ANY_LOCK$HAS_DOCKERFILE" ]; then
+  if command -v grype >/dev/null; then
+    run_tool "grype" "grype 'dir:$SRC' --output table 2>&1 || true"
+  else
+    skip_tool "grype" "binaire absent"
+  fi
+else
+  skip_tool "grype" "aucun lockfile/Dockerfile à scanner"
+fi
+
+# dockle — Dockerfile lint CIS Benchmark
+if [ -n "$HAS_DOCKERFILE" ]; then
+  if command -v dockle >/dev/null; then
+    run_tool "dockle" "find '$SRC' -name 'Dockerfile*' -type f -print0 | xargs -0 -r -n1 dockle --no-color -f list --exit-level fatal 2>&1 || true"
+  else
+    skip_tool "dockle" "binaire absent"
+  fi
+else
+  skip_tool "dockle" "pas de Dockerfile détecté"
 fi
 
 # ─── 5. Wait outils parallèles + reconstruction TOOL_RESULTS ───────────

@@ -142,11 +142,87 @@ aws_id = "AKIAQ27Y4PNJ4PYG2XYZ"
 github_pat = "ghp_abc123XYZ456abc123XYZ456abc123XYZ4567"
 EOF
 
+# Dockerfile vulnérable — trivy-config + checkov + dockle
+cat > "$ROSETTA/Dockerfile" <<'EOF'
+FROM ubuntu:14.04
+USER root
+ADD https://example.com/script.sh /tmp/script.sh
+RUN curl -sL http://example.com | bash
+EXPOSE 22
+EOF
+
+# Terraform vulnérable — checkov
+cat > "$ROSETTA/main.tf" <<'EOF'
+resource "aws_s3_bucket" "leaky" {
+  bucket = "my-public-bucket"
+  acl    = "public-read-write"
+}
+resource "aws_db_instance" "db" {
+  password = "hardcoded123"
+  publicly_accessible = true
+  storage_encrypted = false
+}
+EOF
+
+# K8s manifest vulnérable — trivy-config + checkov
+cat > "$ROSETTA/pod.yaml" <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod
+spec:
+  containers:
+  - name: c
+    image: nginx:1.0
+    securityContext:
+      privileged: true
+      runAsUser: 0
+      allowPrivilegeEscalation: true
+EOF
+
+# EICAR test file (signature antivirus standard) — clamav doit le détecter
+# IMPORTANT : doit être pur 68 octets, pas de padding sinon la signature ne matche plus
+printf 'X5O!P%%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > "$ROSETTA/eicar.com"
+
+# Dummy binaire > 1k pour déclencher HAS_BIN (sinon clamav skippé "aucun binaire")
+dd if=/dev/urandom bs=1100 count=1 2>/dev/null > "$ROSETTA/dummy.bin"
+chmod +x "$ROSETTA/dummy.bin"
+
+# package.json avec lodash 4.0.0 (CVE multiples) — osv-scanner + grype
+cat > "$ROSETTA/package.json" <<'EOF'
+{
+  "name": "bench",
+  "version": "1.0.0",
+  "dependencies": {
+    "lodash": "4.0.0"
+  }
+}
+EOF
+cat > "$ROSETTA/package-lock.json" <<'EOF'
+{
+  "name": "bench",
+  "version": "1.0.0",
+  "lockfileVersion": 2,
+  "requires": true,
+  "packages": {
+    "node_modules/lodash": {
+      "version": "4.0.0",
+      "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.0.0.tgz"
+    }
+  }
+}
+EOF
+
 echo "  ✓ $(find "$ROSETTA" -type f | wc -l) fichiers piégés"
 echo ""
 echo "[2] Lancement client-audit-code"
 START=$SECONDS
-client-audit-code "$ROSETTA" >/tmp/cat-test.log 2>&1
+if ! client-audit-code "$ROSETTA" >/tmp/cat-test.log 2>&1; then
+  echo "  ✗ client-audit-code a crashé (exit non-zero)" >&2
+  echo "  log /tmp/cat-test.log — dernières lignes :" >&2
+  tail -20 /tmp/cat-test.log >&2
+  exit 3
+fi
 DUR=$((SECONDS - START))
 echo "  ✓ audit terminé en ${DUR}s"
 
@@ -178,6 +254,15 @@ CHECKS+=("yamllint@@syntax error@@YAML mal indenté")
 CHECKS+=("retire@@jquery@@jQuery 1.6.1 CVE")
 CHECKS+=("gitleaks@@aws-access-token@@AWS access key détectée")
 CHECKS+=("pip-audit@@PYSEC|CVE-@@requests 2.6.0 vulnérable")
+CHECKS+=("semgrep@@findings:|Findings:@@semgrep multi-langage produit un summary")
+CHECKS+=("trivy-deps@@requests|lodash@@trivy détecte deps vulnérables")
+CHECKS+=("trivy-config@@HIGH|MEDIUM|CRITICAL|MISCONF|FAIL@@trivy détecte misconfigs IaC")
+CHECKS+=("clamav@@FOUND|EICAR@@clamav détecte EICAR test file")
+CHECKS+=("osv-scanner@@CVE-|GHSA-|RUSTSEC|PYSEC@@osv-scanner trouve vulns multi-écosystèmes")
+CHECKS+=("checkov@@FAILED|CKV_@@checkov trouve misconfigs IaC")
+CHECKS+=("syft@@NAME|VERSION|PACKAGE@@syft génère SBOM avec packages")
+CHECKS+=("grype@@CVE-|GHSA-|HIGH|CRITICAL|VULNERABILITY@@grype trouve CVE deps")
+CHECKS+=("dockle@@FATAL|WARN|CIS|DKL-@@dockle détecte misconfigs Dockerfile")
 
 PASS=0
 FAIL=0

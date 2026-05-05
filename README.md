@@ -72,7 +72,7 @@ client-audit-test --keep    # garde le rosetta + les logs (debug)
 | `1` | Au moins un FAIL — un outil n'a pas trouvé sa vuln (régression) |
 | `2` | Aucun FAIL mais des WARN — outil pas installé ou pas lancé |
 
-### Vulns plantées par outil
+### Vulns plantées par outil (23 checks)
 
 | Outil | Vuln signature attendue |
 |---|---|
@@ -90,6 +90,15 @@ client-audit-test --keep    # garde le rosetta + les logs (debug)
 | retire | jQuery 1.6.1 (multiples CVE) |
 | gitleaks | AWS access token + GitHub PAT |
 | pip-audit | `requests==2.6.0` (PYSEC + CVE) |
+| semgrep | scan summary (multi-langage actif) |
+| trivy-deps | `lodash@4.0.0` + `requests==2.6.0` |
+| trivy-config | misconfigs Dockerfile + K8s |
+| clamav | EICAR test file (signature antivirus) |
+| osv-scanner | vulns multi-écosystèmes (CVE/GHSA/RUSTSEC/PYSEC) |
+| checkov | misconfigs Terraform (S3 public, hardcoded password) + K8s privileged |
+| syft | SBOM CycloneDX avec packages |
+| grype | CVE depuis sources (lockfiles) |
+| dockle | misconfigs Dockerfile (CIS Benchmark : USER root, ADD URL, etc.) |
 
 ### Quand le lancer
 
@@ -99,10 +108,24 @@ client-audit-test --keep    # garde le rosetta + les logs (debug)
 
 Si un FAIL apparaît, regarde le `.out` de l'outil concerné dans `~/audit-logs/rosetta-stone-test-*/` (lance avec `--keep` pour garder les artefacts).
 
-## Outils SAST supportés
+## Outils SAST supportés (23 outils, validés en CI)
 
-Python (bandit) · Go (gosec) · JS/TS (eslint flat config + parser TS) · JS inline HTML (extraction Python) ·
-PHP (phpstan) · Ruby (brakeman + bundler-audit) · Rust (cargo-audit) · Java (semgrep p/java) ·
-C/C++ (cppcheck + flawfinder) · Shell (shellcheck) · YAML (yamllint) ·
-Multi-langage (semgrep) · Secrets (trufflehog3 + gitleaks) · Deps (trivy + pip-audit) ·
-Libs JS legacy (retire.js) · Malware (clamav)
+**Code statique par langage** : Python (bandit) · Go (gosec) · JS/TS (eslint flat config + parser TS) · JS inline HTML (extraction Python) · PHP (phpstan) · Ruby (brakeman) · Java (semgrep p/java) · C/C++ (cppcheck + flawfinder) · Shell (shellcheck) · YAML (yamllint)
+
+**Multi-langage** : semgrep (`p/security-audit` + `p/secrets`)
+
+**Secrets** : trufflehog3 + gitleaks
+
+**Dépendances vulnérables** : 
+- pip-audit (Python), bundler-audit (Ruby), cargo-audit (Rust), retire.js (libs JS legacy)
+- **osv-scanner v2** (multi-écosystèmes unifié — Google/OpenSSF base OSV)
+- trivy fs (manifests) + grype (CVE matching deps)
+
+**SBOM** : syft (CycloneDX)
+
+**IaC scan** : 
+- **checkov** (Terraform / K8s / Helm / Dockerfile / CloudFormation)
+- trivy config (Dockerfile + K8s)
+- **dockle** (Dockerfile CIS Benchmark)
+
+**Malware** : clamav (signatures + EICAR validé)
