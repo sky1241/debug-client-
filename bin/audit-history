@@ -1,0 +1,56 @@
+#!/bin/bash
+# audit-history — affiche l'historique des audits (lecture .audit-history.jsonl)
+set -uo pipefail
+
+HISTORY="${HOME}/audit-logs/.audit-history.jsonl"
+LIMIT=20
+FILTER=""
+
+usage() {
+  cat <<EOF
+Usage: audit-history [--limit=N] [--filter=PATTERN]
+  --limit=N        : N derniers audits (default 20)
+  --filter=X       : ne montre que les lignes matchant X (client, target, etc.)
+
+Sans option, affiche les 20 derniers runs.
+Variables : HISTORY=$HISTORY
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --limit=*) LIMIT="${arg#--limit=}" ;;
+    --filter=*) FILTER="${arg#--filter=}" ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Option inconnue: $arg" >&2; usage; exit 1 ;;
+  esac
+done
+
+[ -f "$HISTORY" ] || { echo "Aucun historique : $HISTORY n'existe pas (encore aucun audit lancé)." >&2; exit 0; }
+
+python3 - "$HISTORY" "$LIMIT" "$FILTER" <<'PYEOF'
+import json, sys
+
+path, limit, flt = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+with open(path, encoding="utf-8") as f:
+    lines = [l.strip() for l in f if l.strip()]
+if flt:
+    lines = [l for l in lines if flt in l]
+lines = lines[-limit:]
+print(f"{'Date':<25} {'Cmd':<22} {'Client':<25} {'Sb':<3} {'Of':<3} Target")
+print("-" * 110)
+for l in lines:
+    try:
+        e = json.loads(l)
+    except:
+        print("(parse error)"); continue
+    ts = e.get("ts", "?")[:19]
+    cmd = e.get("cmd", "?")[:22]
+    client = e.get("client", "?")[:25]
+    sb = "✓" if e.get("options", {}).get("sandbox") else "·"
+    of = "✓" if e.get("options", {}).get("offline") else "·"
+    target = e.get("target", "?")
+    print(f"{ts:<25} {cmd:<22} {client:<25} {sb:<3} {of:<3} {target}")
+print("-" * 110)
+print(f"Total: {len(lines)} audit(s) (depuis $HISTORY)")
+PYEOF

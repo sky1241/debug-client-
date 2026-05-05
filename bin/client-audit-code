@@ -843,3 +843,26 @@ echo "  AUDIT TERMINÉ"
 echo "  Rapport : $REPORT_PATH"
 echo "  Logs    : $LOG_DIR"
 echo "═══════════════════════════════════════════════════════════"
+
+# ─── 8. Audit log centralisé (jsonl, 1 ligne par run) ──────────────────
+HISTORY_FILE="${HOME}/audit-logs/.audit-history.jsonl"
+mkdir -p "$(dirname "$HISTORY_FILE")" 2>/dev/null || true
+DURATION_S=$(( $(date +%s) - $(date -d "$(grep -oE '[0-9-T:+]+' <<< "$DATE_TAG" | head -1)" +%s 2>/dev/null || echo 0) ))
+[ "$DURATION_S" -lt 0 ] && DURATION_S=0
+python3 - "$HISTORY_FILE" "$CLIENT_NAME" "$TARGET" "$LOG_DIR" "$INPUT_HASH" "$AUDIT_PARALLEL" "$AUDIT_SANDBOX" "$AUDIT_OFFLINE" <<'PYEOF' 2>/dev/null || true
+import json, sys, datetime, os
+hf, client, target, log_dir, sha, par, sb, off = sys.argv[1:]
+entry = {
+    "ts": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+    "cmd": "client-audit-code",
+    "client": client,
+    "target": target,
+    "input_hash_sha256": sha,
+    "log_dir": log_dir,
+    "options": {"parallel": par == "1", "sandbox": sb == "1", "offline": off == "1"},
+    "user": os.getenv("USER", "?"),
+    "host": os.uname().nodename,
+}
+with open(hf, "a", encoding="utf-8") as f:
+    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+PYEOF
