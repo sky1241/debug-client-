@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "slow: tests qui prennent > 5 secondes (rosetta complet, etc.)",
+    "requires_network: tests qui ont besoin d'internet (registries, advisories)",
+    "requires_sandbox: tests qui ont besoin de firejail",
+    "requires_root: tests qui ont besoin de sudo (nmap NSE, etc.)",
+]
