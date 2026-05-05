@@ -147,6 +147,16 @@ def test_023_inline_js_no_dangerous_patterns(cole_clone: Path) -> None:
     assert not found, f"patterns dangereux dans JS inline: {found}"
 
 
+@pytest.mark.slow
+def test_024_client_audit_code_produces_report(cole_clone: Path) -> None:
+    """TESTS.md #24 — `client-audit-code` produit un rapport markdown sur cole-de-danse."""
+    p = run_wrapper("client-audit-code", str(cole_clone), timeout=180)
+    out = p.stdout + p.stderr
+    assert "AUDIT TERMINÉ" in out, f"audit pas terminé:\n{out[-400:]}"
+    rapports = list(cole_clone.glob("audit-claude-*.md"))
+    assert rapports, f"aucun rapport généré dans {cole_clone}"
+
+
 
 
 def test_016_http_server_serves_repo(http_server: int) -> None:
