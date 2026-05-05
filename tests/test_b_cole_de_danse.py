@@ -75,6 +75,18 @@ def test_017_whatweb_detects_python(http_server: int) -> None:
         f"techno python non détectée:\n{out[-300:]}"
 
 
+def test_018_nikto_runs(http_server: int) -> None:
+    """TESTS.md #18 — `nikto` tourne et produit un rapport non-vide."""
+    p = subprocess.run(
+        ["nikto", "-h", f"http://127.0.0.1:{http_server}",
+         "-nointeractive", "-ask", "no", "-maxtime", "20s"],
+        capture_output=True, text=True, timeout=60,
+    )
+    out = p.stdout + p.stderr
+    assert "Nikto" in out, f"nikto non lancé:\n{out[-300:]}"
+    assert "Server:" in out, f"output incomplet:\n{out[-300:]}"
+
+
 
 
 def test_016_http_server_serves_repo(http_server: int) -> None:
