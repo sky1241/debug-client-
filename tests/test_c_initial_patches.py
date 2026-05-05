@@ -8,6 +8,14 @@ from pathlib import Path
 from conftest import BIN_DIR, run_wrapper
 
 
+def test_028_eslint_flat_config_with_ts_parser() -> None:
+    """TESTS.md #28 — Le wrapper utilise eslint flat config + parser TS via require absolu."""
+    code = (BIN_DIR / "client-audit-code").read_text()
+    assert "eslint.config.cjs" in code, "config flat ESLint absente"
+    assert "@typescript-eslint/parser" in code, "parser TypeScript absent"
+    assert "/usr/local/lib/node_modules" in code, "chemin absolu parser absent"
+
+
 def test_027_html_inline_js_detection_present() -> None:
     """TESTS.md #27 — Le wrapper détecte le JS inline HTML (HAS_HTML_INLINE_JS + extraction Python)."""
     code = (BIN_DIR / "client-audit-code").read_text()
