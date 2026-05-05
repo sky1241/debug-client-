@@ -49,6 +49,15 @@ def test_002_repo_wrappers_present() -> None:
     assert not issues, f"wrappers en problème: {issues}"
 
 
+def test_007_fingerprint_public_ip_warns() -> None:
+    """TESTS.md #7 — `audit-fingerprint 8.8.8.8` warn 'IP PUBLIQUE — ordre de mission'."""
+    p = run_wrapper("audit-fingerprint", "8.8.8.8", timeout=20)
+    out = p.stdout + p.stderr
+    assert "IP PUBLIQUE" in out, f"IP publique non flagguée:\n{out[-400:]}"
+    assert "ordre de mission" in out.lower() or "ordre mission" in out.lower(), \
+        f"avertissement légal manquant:\n{out[-400:]}"
+
+
 def test_006_fingerprint_lan_private_recognized() -> None:
     """TESTS.md #6 — `audit-fingerprint 192.168.x.x` reconnaît LAN privée (pas 'IP PUBLIQUE')."""
     import subprocess
