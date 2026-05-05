@@ -124,3 +124,10 @@ def test_034_eslint_detects_eval_in_js(tmp_path: Path) -> None:
     log_dir = audit_rosetta(tmp_path)
     out = (log_dir / "eslint.out").read_text(errors="ignore")
     assert "no-eval" in out or "no-new-func" in out, f"eslint n'a rien trouvé:\n{out[:400]}"
+
+
+def test_035_eslint_ts_parser_works(tmp_path: Path) -> None:
+    """TESTS.md #35 — eslint avec parser TS détecte eval() dans bad.ts."""
+    log_dir = audit_rosetta(tmp_path)
+    out = (log_dir / "eslint.out").read_text(errors="ignore")
+    assert "bad.ts" in out, f"bad.ts non analysé (parser TS cassé ?):\n{out[:400]}"
