@@ -31,6 +31,17 @@ def test_011_repo_findable_via_github_api() -> None:
     assert data.get("private") is False, "repo doit être public"
 
 
+def test_013_audit_fingerprint_on_html_repo(tmp_path: Path) -> None:
+    """TESTS.md #13 — `audit-fingerprint` sur un dossier HTML détecte 'DOSSIER' + 'HTML'."""
+    repo = tmp_path / "site"
+    repo.mkdir()
+    (repo / "index.html").write_text("<!DOCTYPE html><html><body>x</body></html>")
+    p = run_wrapper("audit-fingerprint", str(repo), timeout=20)
+    out = p.stdout + p.stderr
+    assert "DOSSIER" in out, f"section DOSSIER manquante:\n{out[-300:]}"
+    assert "HTML" in out, f"HTML non détecté:\n{out[-300:]}"
+
+
 def test_012_git_clone_works(tmp_path: Path) -> None:
     """TESTS.md #12 — `git clone` récupère le repo (index.html + .git/ présents)."""
     target = tmp_path / "clone"
