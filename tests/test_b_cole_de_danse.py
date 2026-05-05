@@ -21,6 +21,21 @@ from conftest import BIN_DIR, run_wrapper
 COLE_REPO_URL = "https://github.com/sky1241/-cole-de-danse.git"
 
 
+@pytest.fixture(scope="session")
+def cole_clone(tmp_path_factory) -> Path:
+    """Clone une seule fois cole-de-danse pour toute la session.
+
+    En cas d'échec : assert (pas pytest.skip) — l'env DOIT avoir le réseau pour B.
+    """
+    target = tmp_path_factory.mktemp("cole-de-danse-clone") / "repo"
+    p = subprocess.run(
+        ["git", "clone", "--depth=1", COLE_REPO_URL, str(target)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert p.returncode == 0, f"clone cole-de-danse failed (réseau ?): {p.stderr[-300:]}"
+    return target
+
+
 def test_011_repo_findable_via_github_api() -> None:
     """TESTS.md #11 — Le repo `sky1241/-cole-de-danse` est trouvable via API GitHub."""
     with urllib.request.urlopen(
@@ -29,6 +44,23 @@ def test_011_repo_findable_via_github_api() -> None:
         data = json.loads(resp.read())
     assert data.get("name") == "-cole-de-danse"
     assert data.get("private") is False, "repo doit être public"
+
+
+def test_015_no_real_secret_in_html(cole_clone: Path) -> None:
+    """TESTS.md #15 — Pas de pattern AWS/GitHub/Stripe réel dans index.html."""
+    html = (cole_clone / "index.html").read_text(errors="ignore")
+    forbidden = [
+        (r"AKIA[0-9A-Z]{16}", "AWS access key"),
+        (r"ghp_[A-Za-z0-9]{36}", "GitHub PAT classic"),
+        (r"sk_live_[A-Za-z0-9]{20,}", "Stripe live key"),
+        (r"xoxb-[0-9]+-[0-9]+-", "Slack bot token"),
+    ]
+    found: list[str] = []
+    for pat, label in forbidden:
+        m = re.search(pat, html)
+        if m:
+            found.append(f"{label}: {m.group(0)[:30]}...")
+    assert not found, f"secrets réels détectés: {found}"
 
 
 def test_014_cole_de_danse_cname_haoyanwuying(tmp_path: Path) -> None:
