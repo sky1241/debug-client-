@@ -46,6 +46,32 @@ def test_011_repo_findable_via_github_api() -> None:
     assert data.get("private") is False, "repo doit être public"
 
 
+@pytest.fixture(scope="session")
+def http_server(cole_clone: Path):
+    """Lance python -m http.server sur un port libre, sert le clone cole-de-danse."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    proc = subprocess.Popen(
+        ["python3", "-m", "http.server", str(port), "--bind", "127.0.0.1"],
+        cwd=str(cole_clone),
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    time.sleep(0.5)
+    yield port
+    proc.terminate()
+    proc.wait(timeout=5)
+
+
+def test_016_http_server_serves_repo(http_server: int) -> None:
+    """TESTS.md #16 — Le serveur HTTP local sert le repo (200 + HTML body)."""
+    with urllib.request.urlopen(f"http://127.0.0.1:{http_server}/", timeout=5) as resp:
+        assert resp.status == 200, f"status {resp.status}"
+        body = resp.read().decode(errors="ignore")
+    assert "<html" in body.lower() or "<!DOCTYPE" in body, f"pas de HTML servi:\n{body[:200]}"
+
+
 def test_015_no_real_secret_in_html(cole_clone: Path) -> None:
     """TESTS.md #15 — Pas de pattern AWS/GitHub/Stripe réel dans index.html."""
     html = (cole_clone / "index.html").read_text(errors="ignore")
