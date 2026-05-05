@@ -26,6 +26,9 @@ Idempotent. Sauvegarde la version `/usr/local/bin/X` actuelle si c'est un fichie
 ## Workflow recommandé
 
 ```bash
+# 0. (avant tout) Vérifier que la stack est saine
+client-audit-test                            # exit 0 = OK
+
 # 1. Récupérer le code client sur le 1TB
 client-mount
 cp -r /chemin/vers/zip-client ~/clients/CLIENT_X/
@@ -52,13 +55,49 @@ client-audit-diff \
 | `AUDIT_PARALLEL` | `1` | Lance les outils en parallèle (×2 plus rapide). Mettre à `0` pour serial. |
 | `AUDIT_TOOL_TIMEOUT` | `300` (code) / `600` (web) / `1800` (net) | Timeout en secondes par outil. |
 
-## Tester la stack
+## Tester la stack — `client-audit-test`
+
+CI reproductible de la stack pentest. Crée un repo "rosetta-stone" piégé avec 1 vuln signature par outil, lance `client-audit-code` dessus, et vérifie que chaque outil a bien trouvé sa vuln.
 
 ```bash
-client-audit-test
+client-audit-test           # CI complète, ~6s, cleanup automatique
+client-audit-test --keep    # garde le rosetta + les logs (debug)
 ```
 
-Crée un repo "rosetta-stone" piégé avec 1 vuln signature par outil, lance audit-code, vérifie que chaque outil l'a bien trouvé. Exit 0 = stack saine.
+### Exit codes
+
+| Code | Signification |
+|:---:|---|
+| `0` | Tous les outils détectent leur vuln signature → stack saine |
+| `1` | Au moins un FAIL — un outil n'a pas trouvé sa vuln (régression) |
+| `2` | Aucun FAIL mais des WARN — outil pas installé ou pas lancé |
+
+### Vulns plantées par outil
+
+| Outil | Vuln signature attendue |
+|---|---|
+| bandit | `eval()` Python (B307) + `pickle.loads` (B403) |
+| gosec | `crypto/md5` (G401) |
+| eslint | `eval()` + `new Function()` dans `.js` ET `.ts` |
+| phpstan | variable PHP indéfinie |
+| brakeman | warnings sécu Ruby (≥1) |
+| bundler-audit | CVE Rails 4.0.0 (Gemfile.lock) |
+| cargo-audit | RUSTSEC-2020-0071 (`time 0.1.43`) |
+| cppcheck | `gets()` obsolète |
+| flawfinder | `gets()` CWE-120 buffer overflow |
+| shellcheck | variable non quotée (SC2086) |
+| yamllint | YAML mal indenté |
+| retire | jQuery 1.6.1 (multiples CVE) |
+| gitleaks | AWS access token + GitHub PAT |
+| pip-audit | `requests==2.6.0` (PYSEC + CVE) |
+
+### Quand le lancer
+
+- **Avant le 1er audit d'un client important** — preuve que la stack répond
+- **Après chaque modif des wrappers** — détecte régressions immédiatement
+- **Après chaque mise à jour système** (apt upgrade, cargo install, npm -g) — vérifie qu'aucun outil n'a cassé son CLI
+
+Si un FAIL apparaît, regarde le `.out` de l'outil concerné dans `~/audit-logs/rosetta-stone-test-*/` (lance avec `--keep` pour garder les artefacts).
 
 ## Outils SAST supportés
 
