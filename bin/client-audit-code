@@ -9,7 +9,9 @@ usage() {
   cat <<EOF
 Usage: client-audit-code <chemin-dossier> [options]
   --replay        : mode reproductible — pas de yield mining, log verbeux
-  --keep          : ne supprime pas la copie locale après audit
+  --keep          : alias --keep-snapshot
+  --keep-snapshot : ne supprime pas la copie /tmp/audit-* après audit
+  --dry-run       : affiche les outils qui seraient lancés, sans exécuter
   --format=FMT    : md (default), json, all (md+json à côté)
   --json          : alias --format=json
 
@@ -27,11 +29,13 @@ EOF
 TARGET=""
 REPLAY=0
 KEEP=0
+DRY_RUN=0
 FORMAT="md"  # md|json|all
 for arg in "$@"; do
   case "$arg" in
     --replay) REPLAY=1 ;;
-    --keep)   KEEP=1 ;;
+    --keep|--keep-snapshot) KEEP=1 ;;
+    --dry-run) DRY_RUN=1 ;;
     --format=*) FORMAT="${arg#--format=}" ;;
     --json) FORMAT="json" ;;
     -h|--help) usage; exit 0 ;;
@@ -283,6 +287,11 @@ _run_one_inline() {
 run_tool() {
   local name="$1"; local cmd="$2"
   TOOL_ORDER+=("$name")
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "  [DRY-RUN] $name : $cmd"
+    printf "%s|DRY-RUN|simulé|-|-\n" "$name" > "$MANIFEST_DIR/${name}.line"
+    return
+  fi
   echo "  → $name"
   if [ "$AUDIT_PARALLEL" = "1" ]; then
     _run_one_inline "$name" "$cmd" &
