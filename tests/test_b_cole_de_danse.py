@@ -134,6 +134,19 @@ def test_022_prod_blocks_git_config() -> None:
     assert p.stdout.strip() == "404", f"prod expose .git/config ! code={p.stdout!r}"
 
 
+def test_023_inline_js_no_dangerous_patterns(cole_clone: Path) -> None:
+    """TESTS.md #23 — Le JS inline d'index.html ne contient pas eval/Function/innerHTML."""
+    html = (cole_clone / "index.html").read_text(errors="ignore")
+    blocks = re.findall(
+        r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>",
+        html, re.DOTALL | re.IGNORECASE,
+    )
+    js = "\n".join(blocks)
+    forbidden = ("eval(", "new Function(", "document.write(", ".innerHTML =")
+    found = [p for p in forbidden if p in js]
+    assert not found, f"patterns dangereux dans JS inline: {found}"
+
+
 
 
 def test_016_http_server_serves_repo(http_server: int) -> None:
