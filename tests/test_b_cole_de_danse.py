@@ -99,6 +99,19 @@ def test_019_gobuster_finds_index(http_server: int, tmp_path: Path) -> None:
     assert "index.html" in p.stdout, f"gobuster n'a pas trouvé index.html:\n{p.stdout[-300:]}"
 
 
+def test_020_prod_headers_github_pages() -> None:
+    """TESTS.md #20 — `curl -I haoyanwuying.com` retourne 200 + signature GitHub Pages/Fastly."""
+    p = subprocess.run(
+        ["curl", "-sI", "-L", "--max-time", "10", "https://haoyanwuying.com/"],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert p.returncode == 0, f"curl exit {p.returncode}: {p.stderr[-200:]}"
+    out = p.stdout
+    assert "200" in out, f"pas de 200 OK:\n{out[:300]}"
+    assert any(s in out.lower() for s in ("github.com", "fastly", "varnish")), \
+        f"signature GitHub Pages absente:\n{out[:400]}"
+
+
 
 
 def test_016_http_server_serves_repo(http_server: int) -> None:
