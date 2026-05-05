@@ -64,6 +64,19 @@ def http_server(cole_clone: Path):
     proc.wait(timeout=5)
 
 
+def test_017_whatweb_detects_python(http_server: int) -> None:
+    """TESTS.md #17 — `whatweb -a 3` détecte Python/SimpleHTTP."""
+    p = subprocess.run(
+        ["whatweb", "-a", "3", f"http://127.0.0.1:{http_server}/"],
+        capture_output=True, text=True, timeout=30,
+    )
+    out = p.stdout + p.stderr
+    assert any(s in out for s in ("Python", "SimpleHTTP", "BaseHTTP")), \
+        f"techno python non détectée:\n{out[-300:]}"
+
+
+
+
 def test_016_http_server_serves_repo(http_server: int) -> None:
     """TESTS.md #16 — Le serveur HTTP local sert le repo (200 + HTML body)."""
     with urllib.request.urlopen(f"http://127.0.0.1:{http_server}/", timeout=5) as resp:
