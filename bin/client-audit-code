@@ -57,19 +57,66 @@ if [ "$REPLAY" -eq 0 ]; then
   trap 'mine-resume 2>/dev/null || true' EXIT
 fi
 
-# ─── 1. Snapshot dans /tmp ─────────────────────────────────────────────
+# ─── 1. Pre-check anti-DoS (avant rsync) ───────────────────────────────
+# Limites configurables via env. Defaults raisonnables pour audit code.
+AUDIT_MAX_FILES="${AUDIT_MAX_FILES:-50000}"
+AUDIT_MAX_FILE_SIZE="${AUDIT_MAX_FILE_SIZE:-50M}"  # rsync format
+AUDIT_MAX_TOTAL_SIZE_MB="${AUDIT_MAX_TOTAL_SIZE_MB:-1024}"  # 1 GiB
+
 echo ""
-echo "[1] Snapshot $TARGET → $WORKDIR"
+echo "[1a] Pre-check anti-DoS (max files=$AUDIT_MAX_FILES, max file size=$AUDIT_MAX_FILE_SIZE, max total=${AUDIT_MAX_TOTAL_SIZE_MB}M)"
+
+# Compteur de fichiers (évite path bomb)
+SOURCE_FILES=$(find "$TARGET" -maxdepth 30 -type f -not -path "*/node_modules/*" -not -path "*/.git/objects/*" 2>/dev/null | wc -l)
+if [ "$SOURCE_FILES" -gt "$AUDIT_MAX_FILES" ]; then
+  echo "  ✗ ERREUR: $SOURCE_FILES fichiers (limite: $AUDIT_MAX_FILES). Repo trop gros ou path bomb." >&2
+  echo "  Override : AUDIT_MAX_FILES=N client-audit-code <path>" >&2
+  exit 2
+fi
+
+# Taille totale (en MiB)
+SOURCE_SIZE_MB=$(du -sm --max-depth=0 "$TARGET" 2>/dev/null | cut -f1)
+if [ "${SOURCE_SIZE_MB:-0}" -gt "$AUDIT_MAX_TOTAL_SIZE_MB" ]; then
+  echo "  ✗ ERREUR: $SOURCE_SIZE_MB MiB (limite: $AUDIT_MAX_TOTAL_SIZE_MB MiB)." >&2
+  echo "  Override : AUDIT_MAX_TOTAL_SIZE_MB=N client-audit-code <path>" >&2
+  exit 2
+fi
+
+# Détection symlinks pointant hors du scope (anti exfil de /home/.ssh, /etc/, etc.)
+TARGET_RP="$(realpath "$TARGET")"
+EXTERNAL_SYMLINKS=0
+while IFS= read -r symlink; do
+  link_target=$(realpath "$symlink" 2>/dev/null || true)
+  if [ -n "$link_target" ] && [[ "$link_target" != "$TARGET_RP"* ]]; then
+    EXTERNAL_SYMLINKS=$((EXTERNAL_SYMLINKS + 1))
+    if [ "$EXTERNAL_SYMLINKS" -le 5 ]; then
+      echo "  ⚠ Symlink externe détecté: $symlink → $link_target (sera EXCLU)"
+    fi
+  fi
+done < <(find "$TARGET" -maxdepth 30 -type l 2>/dev/null)
+
+if [ "$EXTERNAL_SYMLINKS" -gt 5 ]; then
+  echo "  ⚠ ... (total: $EXTERNAL_SYMLINKS symlinks externes — tous exclus)"
+fi
+
+echo "  ✓ pre-check OK ($SOURCE_FILES fichiers, ${SOURCE_SIZE_MB} MiB)"
+
+# ─── 1b. Snapshot dans /tmp ─────────────────────────────────────────────
+echo ""
+echo "[1b] Snapshot $TARGET → $WORKDIR"
 mkdir -p "$WORKDIR/src"
-rsync -a --exclude='.git/objects' --exclude='node_modules' --exclude='__pycache__' \
+# --safe-links + --max-size = anti symlink externe + anti file bomb
+# Pas de --copy-unsafe-links : on EXCLUT les symlinks externes plutôt que de les suivre
+rsync -a --safe-links --max-size="$AUDIT_MAX_FILE_SIZE" \
+      --exclude='.git/objects' --exclude='node_modules' --exclude='__pycache__' \
       --exclude='*.pyc' --exclude='dist' --exclude='build' --exclude='.venv' \
       --exclude='venv' --exclude='target' \
       "$TARGET/" "$WORKDIR/src/" 2>&1 | tail -3
 SRC="$WORKDIR/src"
 
 # Hash global du snapshot
-INPUT_HASH=$(cd "$SRC" && find . -type f -exec sha256sum {} \; 2>/dev/null | sort | sha256sum | cut -d' ' -f1)
-TOTAL_FILES=$(find "$SRC" -type f 2>/dev/null | wc -l)
+INPUT_HASH=$(cd "$SRC" && find . -maxdepth 30 -type f -exec sha256sum {} \; 2>/dev/null | sort | sha256sum | cut -d' ' -f1)
+TOTAL_FILES=$(find "$SRC" -maxdepth 30 -type f 2>/dev/null | wc -l)
 TOTAL_SIZE=$(du -sh "$SRC" 2>/dev/null | cut -f1)
 echo "  fichiers analysés : $TOTAL_FILES (taille $TOTAL_SIZE)"
 echo "  hash sha256 global: $INPUT_HASH"
