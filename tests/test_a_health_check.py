@@ -6,6 +6,7 @@ sont installés/fonctionnels.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -24,3 +25,25 @@ def test_001_kali_tools_installed(kali_tools: list[str]) -> None:
     assert kali_tools, "tool-versions.lock vide ou absent (lance `audit-doctor --bump`)"
     missing = [t for t in kali_tools if not tool_available(t)]
     assert not missing, f"outils absents: {missing}"
+
+
+def test_002_repo_wrappers_present() -> None:
+    """TESTS.md #2 — Les 8 wrappers principaux du repo bin/ sont présents et exécutables."""
+    expected = [
+        "audit-fingerprint",
+        "client-audit-code",
+        "client-audit-web",
+        "client-audit-net",
+        "client-audit-test",
+        "client-audit-diff",
+        "audit-doctor",
+        "audit-history",
+    ]
+    issues: list[str] = []
+    for name in expected:
+        path = BIN_DIR / name
+        if not path.is_file():
+            issues.append(f"{name}: absent")
+        elif not os.access(path, os.X_OK):
+            issues.append(f"{name}: non-exécutable")
+    assert not issues, f"wrappers en problème: {issues}"
