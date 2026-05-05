@@ -49,6 +49,15 @@ def test_002_repo_wrappers_present() -> None:
     assert not issues, f"wrappers en problème: {issues}"
 
 
+def test_005_fingerprint_loopback_recognized() -> None:
+    """TESTS.md #5 — `audit-fingerprint 127.0.0.1` reconnaît la loopback (pas 'IP PUBLIQUE')."""
+    p = run_wrapper("audit-fingerprint", "127.0.0.1", timeout=30)
+    out = p.stdout + p.stderr
+    # Doit reconnaître loopback ; ne doit JAMAIS dire 'IP PUBLIQUE' pour 127.0.0.1
+    assert "Loopback" in out or "loopback" in out, f"loopback non reconnu:\n{out[-400:]}"
+    assert "IP PUBLIQUE" not in out, f"127.0.0.1 flagué publique (régression):\n{out[-400:]}"
+
+
 def test_004_bandit_detects_python_dangers(repo_with) -> None:
     """TESTS.md #4 — `bandit` détecte eval / pickle.loads / shell=True dans un .py piégé."""
     import subprocess
