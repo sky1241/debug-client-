@@ -1,0 +1,189 @@
+#!/bin/bash
+# client-audit-net <ip|range> <chemin-pdf-ordre-mission|LAN-AUTO>
+# Recon réseau avec garde-fous + run_tool structuré + timeout par outil.
+set -euo pipefail
+
+TARGET="${1:-}"
+PDF="${2:-}"
+AUDIT_TOOL_TIMEOUT="${AUDIT_TOOL_TIMEOUT:-1800}"  # net = scans plus longs (default 30min)
+
+if [ -z "$TARGET" ] || [ -z "$PDF" ]; then
+  cat <<EOF
+Usage: client-audit-net <IP|range CIDR> <chemin-PDF-ordre-de-mission|LAN-AUTO>
+
+⚠ AUTORISATION ÉCRITE OBLIGATOIRE pour toute IP non-LAN.
+   LAN privé (192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12) + loopback (127.0.0.0/8)
+   acceptent PDF=LAN-AUTO.
+
+Exemples :
+  client-audit-net 192.168.1.0/24 LAN-AUTO
+  client-audit-net 127.0.0.1 LAN-AUTO
+  client-audit-net 5.6.7.8 ~/clients/CLIENT_X/ordre-mission.pdf
+
+Variables d'environnement :
+  AUDIT_TOOL_TIMEOUT  timeout par outil en secondes (default: 1800 = 30min)
+EOF
+  exit 1
+fi
+
+# Détection scope (LAN privé + loopback + link-local)
+IS_LAN=0
+if [[ "$TARGET" =~ ^192\.168\. ]] || [[ "$TARGET" =~ ^10\. ]] \
+   || [[ "$TARGET" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]] \
+   || [[ "$TARGET" =~ ^127\. ]] || [[ "$TARGET" =~ ^169\.254\. ]]; then
+  IS_LAN=1
+fi
+
+if [ "$IS_LAN" -eq 0 ] || [ "$PDF" != "LAN-AUTO" ]; then
+  [ -f "$PDF" ] || { echo "ERREUR: PDF introuvable: $PDF" >&2; exit 1; }
+  [ "$(stat -c%s "$PDF")" -gt 1000 ] || { echo "ERREUR: PDF suspicieusement petit" >&2; exit 1; }
+
+  echo "═══ CONFIRMATION ORDRE DE MISSION ═══"
+  echo "Cible    : $TARGET"
+  echo "Document : $PDF"
+  echo "Hash PDF : $(sha256sum "$PDF" | cut -d' ' -f1)"
+  read -p "Tape 'OUI JE CONFIRME' : " c
+  [ "$c" = "OUI JE CONFIRME" ] || { echo "ANNULÉ"; exit 1; }
+fi
+
+DATE_TAG="$(date +%Y-%m-%d-%H%M%S)"
+SAFE_TARGET="$(echo "$TARGET" | tr '/' '_')"
+LOG_DIR="$HOME/audit-logs/net/${SAFE_TARGET}/${DATE_TAG}"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/run.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+if [ "$IS_LAN" -eq 0 ]; then
+  cp "$PDF" "$LOG_DIR/ordre-mission.pdf"
+  sha256sum "$PDF" > "$LOG_DIR/ordre-mission.pdf.sha256"
+fi
+echo "$TARGET" > "$LOG_DIR/cible.txt"
+date -Iseconds > "$LOG_DIR/datetime.txt"
+
+REPORT="$LOG_DIR/rapport.md"
+
+echo "═══════════════════════════════════════════════════════════"
+echo "  AUDIT RÉSEAU — $TARGET"
+echo "  date    : $(date -Iseconds)"
+echo "  scope   : $([ "$IS_LAN" -eq 1 ] && echo "LAN/loopback (auto)" || echo "Externe (PDF requis)")"
+echo "  logs    : $LOG_DIR"
+echo "  timeout : ${AUDIT_TOOL_TIMEOUT}s par outil"
+echo "═══════════════════════════════════════════════════════════"
+
+mine-yield 25 || true
+trap 'mine-resume 2>/dev/null || true' EXIT
+
+# ─── run_tool / skip_tool ──────────────────────────────────────────────
+declare -a TOOL_RESULTS
+
+run_tool() {
+  local name="$1"; local cmd="$2"; local outfile="$LOG_DIR/${name}.out"
+  echo "  → $name"
+  if timeout "${AUDIT_TOOL_TIMEOUT}" bash -c "$cmd" > "$outfile" 2>&1; then
+    local n="$(wc -l < "$outfile")"
+    TOOL_RESULTS+=("$name|LANCÉ|-|$n lignes|$outfile")
+  else
+    local code="$?"
+    local n="$(wc -l < "$outfile")"
+    if [ "$code" -eq 124 ]; then
+      TOOL_RESULTS+=("$name|TIMEOUT|>${AUDIT_TOOL_TIMEOUT}s|$n lignes (partiel)|$outfile")
+    else
+      TOOL_RESULTS+=("$name|LANCÉ|exit=$code|$n lignes|$outfile")
+    fi
+  fi
+}
+
+skip_tool() {
+  local name="$1"; local reason="$2"
+  echo "  ⊘ $name (skip: $reason)"
+  TOOL_RESULTS+=("$name|SKIPPÉ|$reason|-|-")
+}
+
+# ─── [1] nmap services top-1000 (rapide) ───────────────────────────────
+echo ""
+echo "[1] Services TCP top-1000"
+if command -v nmap >/dev/null; then
+  run_tool "nmap-services" "sudo -n nmap -sV --top-ports 1000 -T4 -oN '$LOG_DIR/nmap-services.gnmap' '$TARGET'"
+else
+  skip_tool "nmap-services" "nmap absent"
+fi
+
+# ─── [2] nmap NSE vuln (intrusif modéré) ───────────────────────────────
+echo ""
+echo "[2] NSE vuln scripts"
+if command -v nmap >/dev/null; then
+  run_tool "nmap-vuln" "sudo -n nmap --script 'default,vuln' --top-ports 1000 -T4 -oN '$LOG_DIR/nmap-vuln.gnmap' '$TARGET'"
+else
+  skip_tool "nmap-vuln" "nmap absent"
+fi
+
+# ─── [3] OS detect (LAN seulement, demande root + ARP) ─────────────────
+echo ""
+echo "[3] OS detect"
+if [ "$IS_LAN" -eq 1 ] && command -v nmap >/dev/null; then
+  run_tool "nmap-os" "sudo -n nmap -O -T4 --osscan-limit '$TARGET'"
+else
+  skip_tool "nmap-os" "réservé scope LAN (nécessite root + ARP)"
+fi
+
+# ─── [4] Génération rapport markdown ───────────────────────────────────
+echo ""
+echo "[4] Génération rapport"
+
+cat > "$REPORT" <<EOF
+# Audit réseau — $TARGET
+
+**Date** : $(date -Iseconds)
+**Cible** : $TARGET
+**Mode**  : $([ "$IS_LAN" -eq 1 ] && echo "LAN/loopback (auto-autorisé)" || echo "Externe — ordre mission $(basename "$PDF") sha256=$(sha256sum "$PDF" 2>/dev/null | cut -d' ' -f1)")
+**Timeout par outil** : ${AUDIT_TOOL_TIMEOUT}s
+
+## Outils — preuve d'exécution
+
+| Outil | Statut | Détail | Output |
+|---|---|---|---|
+EOF
+
+for r in "${TOOL_RESULTS[@]}"; do
+  IFS='|' read -r name status reason findings outfile <<< "$r"
+  echo "| \`$name\` | $status | $reason | $findings |" >> "$REPORT"
+done
+
+cat >> "$REPORT" <<EOF
+
+## Détails par outil
+EOF
+
+for r in "${TOOL_RESULTS[@]}"; do
+  IFS='|' read -r name status reason findings outfile <<< "$r"
+  if { [ "$status" = "LANCÉ" ] || [ "$status" = "TIMEOUT" ]; } && [ -f "$outfile" ]; then
+    echo "" >> "$REPORT"
+    echo "### $name" >> "$REPORT"
+    echo '```' >> "$REPORT"
+    head -100 "$outfile" >> "$REPORT"
+    [ "$(wc -l < "$outfile")" -gt 100 ] && echo "... ($(wc -l < "$outfile") lignes au total — voir $outfile)" >> "$REPORT"
+    echo '```' >> "$REPORT"
+  fi
+done
+
+cat >> "$REPORT" <<EOF
+
+## Reproductibilité
+\`\`\`bash
+client-audit-net "$TARGET" "$([ "$IS_LAN" -eq 1 ] && echo "LAN-AUTO" || echo "$PDF")"
+\`\`\`
+
+## Logs complets
+\`$LOG_DIR/\`
+
+---
+*Généré par client-audit-net v2 — Claude on ludo-pc-1*
+EOF
+
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo "  AUDIT RÉSEAU TERMINÉ"
+echo "  Rapport : $REPORT"
+echo "  Logs    : $LOG_DIR"
+echo "═══════════════════════════════════════════════════════════"
+mine-resume || true

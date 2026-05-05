@@ -1,0 +1,223 @@
+#!/bin/bash
+# client-audit-test
+# CI de la stack pentest : crée un rosetta-stone avec 1 vuln signature par outil,
+# lance client-audit-code, et vérifie que chaque outil a bien trouvé SA vuln.
+# Renvoie un tableau PASS/FAIL et exit 0 si tout passe, 1 sinon.
+set -uo pipefail
+
+KEEP=0
+for arg in "$@"; do
+  case "$arg" in
+    --keep) KEEP=1 ;;
+    -h|--help)
+      cat <<EOF
+Usage: client-audit-test [--keep]
+  --keep  : garde le rosetta-stone et les logs après le test (debug)
+
+Crée un repo de test avec une vuln signature par langage, lance
+client-audit-code, et vérifie que chaque outil détecte sa vuln.
+EOF
+      exit 0 ;;
+  esac
+done
+
+ROSETTA="/tmp/rosetta-stone-test-$$"
+mkdir -p "$ROSETTA"
+trap '[ "$KEEP" -eq 0 ] && rm -rf "$ROSETTA"' EXIT
+
+echo "═══════════════════════════════════════════════════════════"
+echo "  CLIENT-AUDIT-TEST — rosetta-stone CI"
+echo "  workdir : $ROSETTA"
+echo "═══════════════════════════════════════════════════════════"
+echo ""
+echo "[1] Génération rosetta-stone (vulns piégées par langage)"
+
+# Python — bandit (B403 pickle, B307 eval)
+cat > "$ROSETTA/bad.py" <<'EOF'
+import os, pickle
+def attack(user):
+    eval(user)
+    pickle.loads(user)
+    os.system("rm " + user)
+EOF
+
+# Python deps vulnérables — pip-audit
+cat > "$ROSETTA/requirements.txt" <<'EOF'
+requests==2.6.0
+EOF
+
+# Go — gosec G401 MD5
+cat > "$ROSETTA/bad.go" <<'EOF'
+package main
+import ("crypto/md5"; "fmt")
+func main() { h := md5.New(); fmt.Println(h) }
+EOF
+
+# JavaScript — eslint
+cat > "$ROSETTA/bad.js" <<'EOF'
+function f(x){ eval(x); new Function(x)(); }
+EOF
+
+# TypeScript — eslint avec parser TS
+cat > "$ROSETTA/bad.ts" <<'EOF'
+export function bad(x: string): void { eval(x); new Function(x)(); }
+EOF
+
+# Inline JS in HTML — eslint-inline
+cat > "$ROSETTA/index.html" <<'EOF'
+<script>function f(x){ eval(x); }</script>
+EOF
+
+# PHP — phpstan
+cat > "$ROSETTA/bad.php" <<'EOF'
+<?php
+function bad($u) { return $u . $undefinedVariable; }
+EOF
+
+# Ruby — brakeman + bundler-audit (Rails 4.0.0 CVE)
+cat > "$ROSETTA/bad.rb" <<'EOF'
+def bad(input); eval(input); system("rm -rf #{input}"); end
+EOF
+cat > "$ROSETTA/Gemfile.lock" <<'EOF'
+GEM
+  remote: https://rubygems.org/
+  specs:
+    rails (4.0.0)
+PLATFORMS
+  ruby
+DEPENDENCIES
+  rails (= 4.0.0)
+EOF
+
+# Rust — cargo-audit (time 0.1.43 = RUSTSEC-2020-0071)
+cat > "$ROSETTA/Cargo.toml" <<'EOF'
+[package]
+name = "test"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+time = "0.1.43"
+EOF
+cat > "$ROSETTA/Cargo.lock" <<'EOF'
+version = 3
+[[package]]
+name = "test"
+version = "0.1.0"
+[[package]]
+name = "time"
+version = "0.1.43"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca8a50ef2360fbd1eeb0ecd46795a87a19024eb4b53c5dc916ca1fd95fe62438"
+EOF
+
+# C — cppcheck + flawfinder (gets, strcpy CWE-120)
+cat > "$ROSETTA/bad.c" <<'EOF'
+#include <stdio.h>
+#include <string.h>
+void bad(char *u) { char b[16]; strcpy(b, u); gets(b); }
+int main() { return 0; }
+EOF
+
+# Shell — shellcheck SC2086
+cat > "$ROSETTA/bad.sh" <<'EOF'
+#!/bin/bash
+rm -rf $1
+EOF
+
+# YAML — yamllint
+cat > "$ROSETTA/bad.yml" <<'EOF'
+foo:
+   bar: 1
+  baz: 2
+EOF
+
+# retire.js — jQuery 1.6.1 multiples CVE
+cat > "$ROSETTA/jquery-1.6.1.min.js" <<'EOF'
+/*! jQuery v1.6.1 | (c) 2011 John Resig */
+EOF
+
+# gitleaks — AWS key + GitHub PAT format valide
+cat > "$ROSETTA/secrets-leak.py" <<'EOF'
+aws_id = "AKIAQ27Y4PNJ4PYG2XYZ"
+github_pat = "ghp_abc123XYZ456abc123XYZ456abc123XYZ4567"
+EOF
+
+echo "  ✓ $(find "$ROSETTA" -type f | wc -l) fichiers piégés"
+echo ""
+echo "[2] Lancement client-audit-code"
+START=$SECONDS
+client-audit-code "$ROSETTA" >/tmp/cat-test.log 2>&1
+DUR=$((SECONDS - START))
+echo "  ✓ audit terminé en ${DUR}s"
+
+# Localiser le LOG_DIR créé
+ROSETTA_NAME="$(basename "$ROSETTA")"
+LOG_DIR=$(ls -td "$HOME/audit-logs/${ROSETTA_NAME}/"*/ 2>/dev/null | head -1)
+[ -d "$LOG_DIR" ] || { echo "ERREUR: log dir introuvable" >&2; exit 1; }
+echo "  log: $LOG_DIR"
+echo ""
+
+# ─── Vérifications par outil ──────────────────────────────────────────
+echo "[3] Vérification des findings par outil"
+echo ""
+
+declare -a CHECKS
+# format: tool@@pattern_grep_E@@description (separateur @@ pour permettre | dans pattern)
+
+CHECKS+=("bandit@@B307@@eval Python (B307) OR pickle.loads (B403)")
+CHECKS+=("gosec@@G401@@MD5 faible (G401)")
+CHECKS+=("eslint@@no-eval@@eval/new-Function dans .js + .ts")
+CHECKS+=("phpstan@@undefinedVariable@@variable indéfinie PHP")
+CHECKS+=("brakeman@@Security Warnings: [1-9]@@warnings sécu détectées")
+CHECKS+=("bundler-audit@@rails@@CVE Rails 4.0.0")
+CHECKS+=("cargo-audit@@RUSTSEC@@RUSTSEC-2020-0071 sur time 0.1.43")
+CHECKS+=("cppcheck@@gets@@gets() obsolète")
+CHECKS+=("flawfinder@@gets@@gets() CWE-120 buffer overflow")
+CHECKS+=("shellcheck@@SC2086@@variable non quotée")
+CHECKS+=("yamllint@@syntax error@@YAML mal indenté")
+CHECKS+=("retire@@jquery@@jQuery 1.6.1 CVE")
+CHECKS+=("gitleaks@@aws-access-token@@AWS access key détectée")
+CHECKS+=("pip-audit@@PYSEC|CVE-@@requests 2.6.0 vulnérable")
+
+PASS=0
+FAIL=0
+WARN=0
+
+printf "%-18s %-10s %s\n" "OUTIL" "STATUT" "DÉTAIL"
+printf "%-18s %-10s %s\n" "-----" "------" "------"
+
+for c in "${CHECKS[@]}"; do
+  tool="${c%%@@*}"
+  rest="${c#*@@}"
+  pattern="${rest%%@@*}"
+  desc="${rest#*@@}"
+  outfile="$LOG_DIR/${tool}.out"
+  if [ ! -f "$outfile" ]; then
+    printf "%-18s \033[33m%-10s\033[0m %s\n" "$tool" "WARN" "outfile absent (outil pas lancé/pas installé) — $desc"
+    WARN=$((WARN+1))
+    continue
+  fi
+  if grep -qiE "$pattern" "$outfile" 2>/dev/null; then
+    printf "%-18s \033[32m%-10s\033[0m %s\n" "$tool" "PASS" "$desc"
+    PASS=$((PASS+1))
+  else
+    printf "%-18s \033[31m%-10s\033[0m %s\n" "$tool" "FAIL" "pattern '$pattern' introuvable — $desc"
+    FAIL=$((FAIL+1))
+  fi
+done
+
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo "  RÉSULTAT : $PASS PASS / $FAIL FAIL / $WARN WARN"
+echo "  Durée audit : ${DUR}s"
+[ "$KEEP" -eq 1 ] && echo "  Rosetta gardé : $ROSETTA"
+[ "$KEEP" -eq 1 ] && echo "  Logs gardés   : $LOG_DIR"
+echo "═══════════════════════════════════════════════════════════"
+
+if [ "$FAIL" -gt 0 ]; then
+  exit 1
+elif [ "$WARN" -gt 0 ]; then
+  exit 2
+else
+  exit 0
+fi

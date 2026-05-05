@@ -1,0 +1,138 @@
+#!/bin/bash
+# audit-fingerprint <chemin|url|ip>
+# Pass 1 — reconnaissance passive : détecte ce qu'est la cible
+# pour décider quels outils s'appliquent en pass 2.
+set -euo pipefail
+
+TARGET="${1:-}"
+[ -n "$TARGET" ] || {
+  echo "Usage: audit-fingerprint <chemin|url|ip>" >&2
+  exit 1
+}
+
+# ─── DOSSIER ───────────────────────────────────────────────────────────
+if [ -d "$TARGET" ]; then
+  echo "═══ Cible: DOSSIER ($TARGET) ═══"
+  cd "$TARGET"
+
+  echo ""
+  echo "## Volume"
+  total_files=$(find . -type f 2>/dev/null | wc -l)
+  total_size=$(du -sh . 2>/dev/null | cut -f1)
+  echo "  fichiers: $total_files | taille: $total_size"
+
+  echo ""
+  echo "## Langages détectés"
+  declare -A LANG_COUNT
+  declare -A LANG_NAME=(
+    [py]="Python" [go]="Go" [js]="JavaScript" [ts]="TypeScript"
+    [tsx]="TypeScript+React" [jsx]="JS+React" [php]="PHP" [rb]="Ruby"
+    [java]="Java" [kt]="Kotlin" [rs]="Rust" [c]="C" [cpp]="C++"
+    [cs]="C#" [sh]="Bash" [sql]="SQL" [html]="HTML" [css]="CSS"
+    [yml]="YAML" [yaml]="YAML" [json]="JSON" [toml]="TOML" [xml]="XML"
+  )
+  for ext in "${!LANG_NAME[@]}"; do
+    c=$(find . -name "*.$ext" -type f 2>/dev/null | wc -l)
+    [ "$c" -gt 0 ] && printf "  %-20s : %d fichiers\n" "${LANG_NAME[$ext]} (.$ext)" "$c"
+  done
+
+  echo ""
+  echo "## Package managers / build"
+  for f in package.json requirements.txt Pipfile pyproject.toml go.mod composer.json pom.xml build.gradle Cargo.toml Gemfile pubspec.yaml mix.exs; do
+    [ -f "$f" ] && echo "  ✓ $f"
+  done
+
+  echo ""
+  echo "## Containerisation / orchestration"
+  for f in Dockerfile docker-compose.yml docker-compose.yaml .dockerignore; do
+    [ -f "$f" ] && echo "  ✓ $f"
+  done
+  k8s=$(find . \( -name "*.yaml" -o -name "*.yml" \) -type f 2>/dev/null | { xargs -r grep -l "apiVersion:" 2>/dev/null || true; } | head -3 || true)
+  [ -n "${k8s:-}" ] && echo "  ✓ k8s manifests détectés (premiers): $(echo "$k8s" | tr '\n' ' ')"
+
+  echo ""
+  echo "## CI / déploiement"
+  for f in .github/workflows .gitlab-ci.yml .circleci/config.yml Jenkinsfile bitbucket-pipelines.yml; do
+    [ -e "$f" ] && echo "  ✓ $f"
+  done
+
+  echo ""
+  echo "## Indicateurs de risque"
+  for f in .env .env.local .env.production .env.dev; do
+    [ -f "$f" ] && echo "  ⚠ $f trouvé (potentiellement secrets en clair)"
+  done
+  if [ -d .git ]; then
+    echo "  ✓ Dépôt git (rechercher secrets dans l'historique avec trufflehog)"
+  fi
+  pem=$(find . \( -name "*.pem" -o -name "*.key" -o -name "id_rsa" -o -name "id_ed25519" \) -type f 2>/dev/null | head -5 || true)
+  [ -n "${pem:-}" ] && echo "  ⚠ Clés privées potentielles: $(echo "$pem" | tr '\n' ' ')"
+  binaries=$(find . -type f -executable ! -name "*.sh" ! -name "*.py" ! -name "*.js" 2>/dev/null | head -20 || true)
+  bin_count=0
+  [ -n "${binaries:-}" ] && bin_count=$(echo "$binaries" | wc -l)
+  [ "$bin_count" -gt 0 ] && echo "  ℹ $bin_count binaires exécutables (à scanner avec clamav)"
+
+  echo ""
+  echo "## Frameworks détectés (heuristique imports)"
+  if [ -f package.json ]; then
+    for fw in react vue angular svelte next nuxt express fastify nestjs; do
+      grep -q "\"$fw\":" package.json 2>/dev/null && echo "  JS: $fw"
+    done
+  fi
+  if [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+    for fw in django flask fastapi pyramid bottle tornado; do
+      (grep -q -i "^$fw" requirements.txt 2>/dev/null || grep -q "\"$fw\"" pyproject.toml 2>/dev/null) && echo "  Python: $fw"
+    done
+  fi
+  exit 0
+fi
+
+# ─── URL ───────────────────────────────────────────────────────────────
+if [[ "$TARGET" =~ ^https?:// ]]; then
+  echo "═══ Cible: URL ($TARGET) ═══"
+  echo ""
+  echo "## ⚠ Pour pentest sur cible URL : ordre de mission écrit obligatoire."
+  echo "    Ce fingerprint est PASSIF (juste headers/whatweb), pas d'attaque."
+  echo ""
+  echo "## Headers HTTP"
+  curl -s -I --max-time 10 "$TARGET" | head -20 || echo "  (échec curl)"
+  echo ""
+  echo "## Fingerprint techno (whatweb)"
+  if command -v whatweb >/dev/null; then
+    whatweb --no-errors -q "$TARGET" 2>/dev/null | head -5 || true
+  else
+    echo "  (whatweb absent)"
+  fi
+  echo ""
+  echo "## httpx probe"
+  if command -v httpx >/dev/null; then
+    echo "$TARGET" | httpx -silent -tech-detect -title -status-code -content-length 2>/dev/null | head -3 || true
+  else
+    echo "  (httpx absent)"
+  fi
+  exit 0
+fi
+
+# ─── IP ────────────────────────────────────────────────────────────────
+if [[ "$TARGET" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+  echo "═══ Cible: IP ($TARGET) ═══"
+  # Vérification scope
+  if [[ "$TARGET" =~ ^192\.168\. ]] || [[ "$TARGET" =~ ^10\. ]] || [[ "$TARGET" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]]; then
+    echo "  ✓ IP privée (LAN) — scan autorisé sans paperasse"
+  elif [[ "$TARGET" =~ ^127\. ]]; then
+    echo "  ✓ Loopback (127.0.0.0/8) — local, scan autorisé"
+  elif [[ "$TARGET" =~ ^169\.254\. ]]; then
+    echo "  ✓ Link-local (169.254.0.0/16) — scan autorisé"
+  else
+    echo "  ⚠ IP PUBLIQUE — ordre de mission OBLIGATOIRE avant tout scan."
+    echo "    Ce fingerprint passif n'envoie qu'un ping, rien d'autre."
+    ping -c 1 -W 2 "$TARGET" >/dev/null 2>&1 && echo "    → host répond au ping" || echo "    → host ne répond pas au ping"
+    exit 0
+  fi
+  echo ""
+  echo "## nmap top-100 ports services"
+  sudo nmap -sV --top-ports 100 -T4 "$TARGET" 2>&1 | grep -E "^[0-9]+/|^Nmap" | head -30
+  exit 0
+fi
+
+echo "ERREUR: cible inconnue. Doit être un dossier, une URL (http(s)://...) ou une IP." >&2
+exit 1

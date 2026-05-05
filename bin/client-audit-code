@@ -1,0 +1,601 @@
+#!/bin/bash
+# client-audit-code <chemin> [--replay] [--keep]
+# Audit complet d'un dossier de code client (SAST + secrets + malware).
+# Choix outils intelligent selon langages détectés.
+# Le rapport markdown est posé À CÔTÉ du dossier audité.
+set -euo pipefail
+
+usage() {
+  cat <<EOF
+Usage: client-audit-code <chemin-dossier> [--replay] [--keep]
+  --replay  : mode reproductible — pas de yield mining, log verbeux
+  --keep    : ne supprime pas la copie locale après audit
+EOF
+}
+
+TARGET=""
+REPLAY=0
+KEEP=0
+for arg in "$@"; do
+  case "$arg" in
+    --replay) REPLAY=1 ;;
+    --keep)   KEEP=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) TARGET="$arg" ;;
+  esac
+done
+
+[ -n "$TARGET" ] || { usage; exit 1; }
+[ -d "$TARGET" ] || { echo "ERREUR: $TARGET n'est pas un dossier" >&2; exit 1; }
+
+# Résolution chemin absolu
+TARGET="$(cd "$TARGET" && pwd)"
+CLIENT_NAME="$(basename "$TARGET")"
+DATE_TAG="$(date +%Y-%m-%d-%H%M%S)"
+WORKDIR="/tmp/audit-${CLIENT_NAME}-${DATE_TAG}"
+REPORT_PATH="${TARGET}/audit-claude-${DATE_TAG}.md"
+LOG_DIR="$HOME/audit-logs/${CLIENT_NAME}/${DATE_TAG}"
+
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/run.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+echo "═══════════════════════════════════════════════════════════"
+echo "  AUDIT CODE — $CLIENT_NAME"
+echo "  date    : $(date -Iseconds)"
+echo "  cible   : $TARGET"
+echo "  workdir : $WORKDIR"
+echo "  rapport : $REPORT_PATH"
+echo "  logs    : $LOG_DIR"
+echo "═══════════════════════════════════════════════════════════"
+
+# ─── 0. Yield mining ───────────────────────────────────────────────────
+if [ "$REPLAY" -eq 0 ]; then
+  echo ""
+  echo "[0] mine-yield 25 (libère 75% CPU pour l'audit)"
+  mine-yield 25 || echo "  (mine-yield indispo, on continue)"
+  trap 'mine-resume 2>/dev/null || true' EXIT
+fi
+
+# ─── 1. Snapshot dans /tmp ─────────────────────────────────────────────
+echo ""
+echo "[1] Snapshot $TARGET → $WORKDIR"
+mkdir -p "$WORKDIR/src"
+rsync -a --exclude='.git/objects' --exclude='node_modules' --exclude='__pycache__' \
+      --exclude='*.pyc' --exclude='dist' --exclude='build' --exclude='.venv' \
+      --exclude='venv' --exclude='target' \
+      "$TARGET/" "$WORKDIR/src/" 2>&1 | tail -3
+SRC="$WORKDIR/src"
+
+# Hash global du snapshot
+INPUT_HASH=$(cd "$SRC" && find . -type f -exec sha256sum {} \; 2>/dev/null | sort | sha256sum | cut -d' ' -f1)
+TOTAL_FILES=$(find "$SRC" -type f 2>/dev/null | wc -l)
+TOTAL_SIZE=$(du -sh "$SRC" 2>/dev/null | cut -f1)
+echo "  fichiers analysés : $TOTAL_FILES (taille $TOTAL_SIZE)"
+echo "  hash sha256 global: $INPUT_HASH"
+
+# ─── 2. Fingerprint (pass 1) ───────────────────────────────────────────
+echo ""
+echo "[2] Fingerprint"
+FINGER="$LOG_DIR/fingerprint.txt"
+audit-fingerprint "$SRC" > "$FINGER"
+cat "$FINGER" | head -40
+
+# ─── 3. Détection signaux pour pass 2 ──────────────────────────────────
+HAS_PY=$(find "$SRC" -name "*.py" -type f -print -quit 2>/dev/null)
+HAS_GO=$(find "$SRC" -name "*.go" -type f -print -quit 2>/dev/null)
+HAS_JS=$(find "$SRC" \( -name "*.js" -o -name "*.ts" -o -name "*.jsx" -o -name "*.tsx" \) -type f -print -quit 2>/dev/null)
+HAS_HTML_INLINE_JS=""
+if [ -z "$HAS_JS" ] && find "$SRC" \( -name "*.html" -o -name "*.htm" \) -type f -print -quit 2>/dev/null | grep -q .; then
+  HAS_HTML_INLINE_JS=$(python3 - "$SRC" 2>/dev/null <<'PYEOF'
+import re, glob, os, sys
+JS_TYPES = {"", "text/javascript", "application/javascript", "module", "application/ecmascript"}
+paths = (glob.glob(os.path.join(sys.argv[1], "**", "*.html"), recursive=True) +
+         glob.glob(os.path.join(sys.argv[1], "**", "*.htm"), recursive=True))
+for path in paths:
+    try: html = open(path, errors="ignore").read()
+    except Exception: continue
+    for m in re.finditer(r"<script([^>]*)>(.*?)</script>", html, re.DOTALL | re.IGNORECASE):
+        attrs, body = m.group(1) or "", m.group(2).strip()
+        if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE): continue
+        tm = re.search(r"\btype\s*=\s*[\"']([^\"']*)[\"']", attrs, re.IGNORECASE)
+        stype = (tm.group(1) if tm else "").strip().lower()
+        if stype in JS_TYPES and body:
+            print("yes"); sys.exit(0)
+PYEOF
+)
+fi
+HAS_DOCKERFILE=$(find "$SRC" -name "Dockerfile*" -type f -print -quit 2>/dev/null)
+HAS_K8S=$(find "$SRC" \( -name "*.yaml" -o -name "*.yml" \) -type f -exec grep -l "apiVersion:" {} \; 2>/dev/null | head -1)
+HAS_PACKAGE_JSON=$(find "$SRC" -name "package.json" -not -path "*/node_modules/*" -type f -print -quit 2>/dev/null)
+HAS_REQUIREMENTS=$(find "$SRC" -name "requirements.txt" -type f -print -quit 2>/dev/null)
+HAS_PYPROJECT=$(find "$SRC" -name "pyproject.toml" -not -path "*/.venv/*" -not -path "*/venv/*" -type f -print -quit 2>/dev/null)
+HAS_GO_MOD=$(find "$SRC" -name "go.mod" -type f -print -quit 2>/dev/null)
+HAS_ENV=$(find "$SRC" -name ".env*" -type f -print -quit 2>/dev/null)
+HAS_GIT=$([ -d "$SRC/.git" ] && echo "yes" || echo "")
+HAS_TS=$(find "$SRC" \( -name "*.ts" -o -name "*.tsx" \) -type f -print -quit 2>/dev/null)
+HAS_PHP=$(find "$SRC" \( -name "*.php" -o -name "*.phtml" -o -name "*.php3" -o -name "*.php4" -o -name "*.php5" \) -type f -print -quit 2>/dev/null)
+HAS_RUBY=$(find "$SRC" -name "*.rb" -type f -print -quit 2>/dev/null)
+HAS_GEMFILE_LOCK=$(find "$SRC" -name "Gemfile.lock" -type f -print -quit 2>/dev/null)
+HAS_RUST=$(find "$SRC" -name "*.rs" -type f -print -quit 2>/dev/null)
+HAS_CARGO_LOCK=$(find "$SRC" -name "Cargo.lock" -type f -print -quit 2>/dev/null)
+HAS_JAVA=$(find "$SRC" -name "*.java" -type f -print -quit 2>/dev/null)
+HAS_C_CPP=$(find "$SRC" \( -name "*.c" -o -name "*.cpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.h" -o -name "*.hpp" \) -type f -print -quit 2>/dev/null)
+HAS_SHELL=$(find "$SRC" \( -name "*.sh" -o -name "*.bash" \) -type f -print -quit 2>/dev/null)
+HAS_YAML_ANY=$(find "$SRC" \( -name "*.yml" -o -name "*.yaml" \) ! -path "*/node_modules/*" ! -path "*/.git/*" -type f -print -quit 2>/dev/null)
+HAS_BIN=$(find "$SRC" -type f -executable -size +1k \
+  ! -path "*/.git/*" \
+  ! -name "*.sh" ! -name "*.py" ! -name "*.js" ! -name "*.ts" ! -name "*.html" ! -name "*.htm" \
+  ! -name "*.css" ! -name "*.json" ! -name "*.xml" ! -name "*.yml" ! -name "*.yaml" ! -name "*.md" ! -name "*.txt" \
+  ! -name "*.jpg" ! -name "*.jpeg" ! -name "*.png" ! -name "*.gif" ! -name "*.svg" ! -name "*.webp" ! -name "*.ico" \
+  ! -name "*.mp4" ! -name "*.webm" ! -name "*.mp3" ! -name "*.wav" ! -name "*.ogg" \
+  ! -name "*.woff" ! -name "*.woff2" ! -name "*.ttf" ! -name "*.otf" ! -name "*.eot" \
+  ! -name "*.pdf" ! -name "*.zip" ! -name "*.tar" ! -name "*.gz" \
+  2>/dev/null | head -1)
+
+# ─── 4. Exécution outils pertinents ────────────────────────────────────
+echo ""
+AUDIT_PARALLEL="${AUDIT_PARALLEL:-1}"
+AUDIT_TOOL_TIMEOUT="${AUDIT_TOOL_TIMEOUT:-300}"
+echo "[3] Lancement outils pertinents (parallèle=${AUDIT_PARALLEL}, timeout=${AUDIT_TOOL_TIMEOUT}s)"
+
+declare -a TOOL_RESULTS
+declare -a TOOL_ORDER
+declare -a TOOL_PIDS
+MANIFEST_DIR="$LOG_DIR/.manifests"
+mkdir -p "$MANIFEST_DIR"
+
+# Worker exécuté en sub-shell : timeout + capture output + écriture manifest atomique
+_run_one_inline() {
+  local name="$1" cmd="$2"
+  local outfile="$LOG_DIR/${name}.out"
+  local manifest="$MANIFEST_DIR/${name}.line"
+  if timeout "${AUDIT_TOOL_TIMEOUT}" bash -c "$cmd" > "$outfile" 2>&1; then
+    local n; n="$(wc -l < "$outfile")"
+    printf "%s|LANCÉ|-|%s lignes output|%s\n" "$name" "$n" "$outfile" > "$manifest"
+  else
+    local code="$?"
+    local n; n="$(wc -l < "$outfile")"
+    if [ "$code" -eq 124 ]; then
+      printf "%s|TIMEOUT|>%ss|%s lignes (partiel)|%s\n" "$name" "${AUDIT_TOOL_TIMEOUT}" "$n" "$outfile" > "$manifest"
+    else
+      printf "%s|LANCÉ|exit=%s|%s lignes output|%s\n" "$name" "$code" "$n" "$outfile" > "$manifest"
+    fi
+  fi
+}
+
+run_tool() {
+  local name="$1"; local cmd="$2"
+  TOOL_ORDER+=("$name")
+  echo "  → $name"
+  if [ "$AUDIT_PARALLEL" = "1" ]; then
+    _run_one_inline "$name" "$cmd" &
+    TOOL_PIDS+=($!)
+  else
+    _run_one_inline "$name" "$cmd"
+  fi
+}
+
+skip_tool() {
+  local name="$1"; local reason="$2"
+  TOOL_ORDER+=("$name")
+  echo "  ⊘ $name (skip: $reason)"
+  printf "%s|SKIPPÉ|%s|-|-\n" "$name" "$reason" > "$MANIFEST_DIR/${name}.line"
+}
+
+# semgrep — toujours pertinent (multi-langage, règles auto)
+if command -v semgrep >/dev/null; then
+  run_tool "semgrep" "semgrep scan --config=p/security-audit --config=p/secrets --no-git-ignore --metrics=off --disable-version-check '$SRC'"
+else
+  skip_tool "semgrep" "binaire absent"
+fi
+
+# bandit — Python only
+if [ -n "$HAS_PY" ]; then
+  run_tool "bandit" "bandit -r '$SRC' -q -f txt"
+else
+  skip_tool "bandit" "aucun fichier .py détecté"
+fi
+
+# gosec — Go only
+if [ -n "$HAS_GO" ]; then
+  if command -v gosec >/dev/null || [ -x "$HOME/go/bin/gosec" ]; then
+    GOSEC="${HOME}/go/bin/gosec"; [ -x "$GOSEC" ] || GOSEC="gosec"
+    run_tool "gosec" "$GOSEC -quiet '$SRC/...'"
+  else
+    skip_tool "gosec" "binaire absent"
+  fi
+else
+  skip_tool "gosec" "aucun fichier .go détecté"
+fi
+
+# eslint — JS/TS standalone, ou JS inline dans .html
+if [ -n "$HAS_JS" ]; then
+  if command -v eslint >/dev/null; then
+    cat > "$SRC/eslint.config.cjs" <<'JSCFG'
+const fs = require("fs");
+const tsParserPath = "/usr/local/lib/node_modules/@typescript-eslint/parser/dist/index.js";
+const tsParser = fs.existsSync(tsParserPath) ? require(tsParserPath) : null;
+const baseRules = {
+  "no-eval": "error",
+  "no-implied-eval": "error",
+  "no-new-func": "error",
+};
+const config = [{
+  files: ["**/*.js","**/*.mjs","**/*.cjs","**/*.jsx"],
+  languageOptions: { ecmaVersion: "latest", sourceType: "module" },
+  rules: baseRules,
+}];
+if (tsParser) {
+  config.push({
+    files: ["**/*.ts","**/*.tsx"],
+    languageOptions: { parser: tsParser, ecmaVersion: "latest", sourceType: "module" },
+    rules: baseRules,
+  });
+} else {
+  config.push({ ignores: ["**/*.ts","**/*.tsx"] });
+}
+module.exports = config;
+JSCFG
+    run_tool "eslint" "cd '$SRC' && eslint ."
+  else
+    skip_tool "eslint" "binaire absent"
+  fi
+elif [ -n "$HAS_HTML_INLINE_JS" ]; then
+  if command -v eslint >/dev/null; then
+    INLINE_JS="$WORKDIR/inline_scripts.js"
+    EXTRACT_LOG="$LOG_DIR/eslint-inline.extract.log"
+    python3 - "$SRC" "$INLINE_JS" > "$EXTRACT_LOG" 2>&1 <<'PYEOF'
+import re, sys, os, glob
+src, out_path = sys.argv[1], sys.argv[2]
+JS_TYPES = {"", "text/javascript", "application/javascript", "module", "application/ecmascript"}
+n_files = n_blocks = total_lines = n_skipped = 0
+with open(out_path, "w") as out:
+    paths = sorted(glob.glob(os.path.join(src, "**", "*.html"), recursive=True) +
+                   glob.glob(os.path.join(src, "**", "*.htm"), recursive=True))
+    for path in paths:
+        try:
+            html = open(path, errors="ignore").read()
+        except Exception as e:
+            print(f"  skip {path}: {e}"); continue
+        rel = os.path.relpath(path, src)
+        found_in_file = skipped_in_file = 0
+        for m in re.finditer(r"<script([^>]*)>(.*?)</script>", html, re.DOTALL | re.IGNORECASE):
+            attrs = m.group(1) or ""
+            body = m.group(2).strip()
+            if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE): continue
+            tm = re.search(r"\btype\s*=\s*[\"']([^\"']*)[\"']", attrs, re.IGNORECASE)
+            stype = (tm.group(1) if tm else "").strip().lower()
+            if stype not in JS_TYPES:
+                skipped_in_file += 1; continue
+            if not body: continue
+            out.write(f"// === {rel} block #{found_in_file+1} ===\n{body}\n\n")
+            found_in_file += 1
+            total_lines += body.count("\n") + 1
+        if found_in_file or skipped_in_file:
+            print(f"  {rel}: {found_in_file} blocks JS extraits, {skipped_in_file} ignorés (non-JS type)")
+        if found_in_file:
+            n_files += 1; n_blocks += found_in_file
+        n_skipped += skipped_in_file
+print(f"Total: {n_blocks} blocks JS dans {n_files} fichier(s) HTML, ~{total_lines} lignes — {n_skipped} blocks non-JS ignorés (json-ld, templates, etc.)")
+PYEOF
+    if [ -s "$INLINE_JS" ]; then
+      cat > "$WORKDIR/eslint.config.cjs" <<'JSCFG'
+module.exports = [{
+  languageOptions: { ecmaVersion: "latest", sourceType: "script" },
+  rules: {
+    "no-eval": "error",
+    "no-implied-eval": "error",
+    "no-new-func": "error",
+  }
+}];
+JSCFG
+      run_tool "eslint-inline" "cd '$WORKDIR' && eslint inline_scripts.js"
+    else
+      skip_tool "eslint-inline" "extraction inline JS vide (voir $EXTRACT_LOG)"
+    fi
+  else
+    skip_tool "eslint-inline" "binaire absent"
+  fi
+else
+  skip_tool "eslint" "aucun fichier JS/TS détecté"
+fi
+
+# trivy fs — dépendances vulnérables (si manifests présents)
+if [ -n "$HAS_PACKAGE_JSON$HAS_REQUIREMENTS$HAS_GO_MOD" ]; then
+  if command -v trivy >/dev/null; then
+    run_tool "trivy-deps" "trivy fs --quiet --scanners vuln '$SRC'"
+  else
+    skip_tool "trivy-deps" "binaire absent"
+  fi
+else
+  skip_tool "trivy-deps" "aucun manifest de dépendances (package.json/requirements.txt/go.mod)"
+fi
+
+# trivy config — Dockerfile/k8s
+if [ -n "$HAS_DOCKERFILE$HAS_K8S" ]; then
+  if command -v trivy >/dev/null; then
+    run_tool "trivy-config" "trivy config --quiet --skip-dirs node_modules '$SRC'"
+  else
+    skip_tool "trivy-config" "binaire absent"
+  fi
+else
+  skip_tool "trivy-config" "pas de Dockerfile ni manifest k8s"
+fi
+
+# trufflehog3 — toujours pertinent (secrets), priorité haute si .env ou .git
+if command -v trufflehog3 >/dev/null; then
+  if [ -n "$HAS_GIT" ]; then
+    run_tool "trufflehog3" "trufflehog3 --severity HIGH '$SRC'"
+  else
+    run_tool "trufflehog3" "trufflehog3 --no-history --severity HIGH '$SRC'"
+  fi
+else
+  skip_tool "trufflehog3" "binaire absent"
+fi
+
+# clamav — uniquement si binaires exécutables (sinon overkill)
+if [ -n "$HAS_BIN" ]; then
+  if command -v clamscan >/dev/null; then
+    run_tool "clamav" "clamscan -r --infected --no-summary '$SRC'"
+  else
+    skip_tool "clamav" "binaire absent"
+  fi
+else
+  skip_tool "clamav" "aucun binaire exécutable détecté (skip pour gain temps)"
+fi
+
+# phpstan — PHP static analysis
+if [ -n "$HAS_PHP" ]; then
+  PHPSTAN="${HOME}/.config/composer/vendor/bin/phpstan"
+  [ -x "$PHPSTAN" ] || PHPSTAN="${HOME}/.composer/vendor/bin/phpstan"
+  [ -x "$PHPSTAN" ] || PHPSTAN="$(command -v phpstan 2>/dev/null || true)"
+  if [ -n "$PHPSTAN" ] && [ -x "$PHPSTAN" ]; then
+    run_tool "phpstan" "'$PHPSTAN' analyse --no-progress --no-ansi --level=0 --error-format=raw '$SRC'"
+  else
+    skip_tool "phpstan" "binaire absent"
+  fi
+else
+  skip_tool "phpstan" "aucun fichier .php détecté"
+fi
+
+# brakeman — Ruby/Rails security scanner
+if [ -n "$HAS_RUBY" ]; then
+  if command -v brakeman >/dev/null; then
+    run_tool "brakeman" "brakeman --quiet --force --no-progress --no-color --format text '$SRC'"
+  else
+    skip_tool "brakeman" "binaire absent"
+  fi
+else
+  skip_tool "brakeman" "aucun fichier .rb détecté"
+fi
+
+# bundler-audit — Ruby gems CVE check
+if [ -n "$HAS_GEMFILE_LOCK" ]; then
+  if command -v bundler-audit >/dev/null; then
+    run_tool "bundler-audit" "cd '$SRC' && bundler-audit check --update 2>&1 || true"
+  else
+    skip_tool "bundler-audit" "binaire absent"
+  fi
+else
+  skip_tool "bundler-audit" "pas de Gemfile.lock détecté"
+fi
+
+# cargo-audit — Rust crates CVE check (Cargo.lock)
+if [ -n "$HAS_CARGO_LOCK" ]; then
+  CARGO_AUDIT="${HOME}/.cargo/bin/cargo-audit"
+  [ -x "$CARGO_AUDIT" ] || CARGO_AUDIT="$(command -v cargo-audit 2>/dev/null || true)"
+  if [ -n "$CARGO_AUDIT" ] && [ -x "$CARGO_AUDIT" ]; then
+    run_tool "cargo-audit" "cd '$SRC' && '$CARGO_AUDIT' audit --quiet 2>&1 || true"
+  else
+    skip_tool "cargo-audit" "binaire absent"
+  fi
+elif [ -n "$HAS_RUST" ]; then
+  skip_tool "cargo-audit" "fichiers .rs présents mais pas de Cargo.lock"
+else
+  skip_tool "cargo-audit" "aucun fichier Rust détecté"
+fi
+
+# cppcheck — C/C++ static analysis
+if [ -n "$HAS_C_CPP" ]; then
+  if command -v cppcheck >/dev/null; then
+    run_tool "cppcheck" "cppcheck --enable=warning,style,performance,portability --quiet --template='{file}:{line}: {severity}: {id}: {message}' '$SRC'"
+  else
+    skip_tool "cppcheck" "binaire absent"
+  fi
+else
+  skip_tool "cppcheck" "aucun fichier C/C++ détecté"
+fi
+
+# flawfinder — C/C++ security (CWE-mapped)
+if [ -n "$HAS_C_CPP" ]; then
+  if command -v flawfinder >/dev/null; then
+    run_tool "flawfinder" "flawfinder --quiet --minlevel=2 --columns '$SRC'"
+  else
+    skip_tool "flawfinder" "binaire absent"
+  fi
+else
+  skip_tool "flawfinder" "aucun fichier C/C++ détecté"
+fi
+
+# semgrep-java — fallback SAST pour Java (pas de spotbugs natif)
+if [ -n "$HAS_JAVA" ]; then
+  if command -v semgrep >/dev/null; then
+    run_tool "semgrep-java" "semgrep scan --config=p/java --config=p/owasp-top-ten --no-git-ignore --metrics=off --disable-version-check '$SRC'"
+  else
+    skip_tool "semgrep-java" "semgrep absent"
+  fi
+else
+  skip_tool "semgrep-java" "aucun fichier .java détecté"
+fi
+
+# shellcheck — Shell scripts (bash, sh)
+if [ -n "$HAS_SHELL" ]; then
+  if command -v shellcheck >/dev/null; then
+    run_tool "shellcheck" "find '$SRC' \\( -name '*.sh' -o -name '*.bash' \\) -type f ! -path '*/.git/*' -print0 | xargs -0 -r shellcheck --severity=info --format=gcc 2>&1 || true"
+  else
+    skip_tool "shellcheck" "binaire absent"
+  fi
+else
+  skip_tool "shellcheck" "aucun fichier shell détecté"
+fi
+
+# yamllint — YAML syntax + style
+if [ -n "$HAS_YAML_ANY" ]; then
+  if command -v yamllint >/dev/null; then
+    run_tool "yamllint" "yamllint -f parsable '$SRC' 2>&1 || true"
+  else
+    skip_tool "yamllint" "binaire absent"
+  fi
+else
+  skip_tool "yamllint" "aucun fichier YAML détecté"
+fi
+
+# gitleaks — secrets (complément trufflehog3, autres patterns/règles)
+if command -v gitleaks >/dev/null; then
+  if [ -n "$HAS_GIT" ]; then
+    run_tool "gitleaks" "gitleaks dir --no-banner --redact --report-format=json --report-path='$LOG_DIR/gitleaks.json' '$SRC' 2>&1; cat '$LOG_DIR/gitleaks.json' 2>/dev/null | head -200 || true"
+  else
+    run_tool "gitleaks" "gitleaks dir --no-banner --redact --report-format=json --report-path='$LOG_DIR/gitleaks.json' '$SRC' 2>&1; cat '$LOG_DIR/gitleaks.json' 2>/dev/null | head -200 || true"
+  fi
+else
+  skip_tool "gitleaks" "binaire absent"
+fi
+
+# retire.js — vulnérabilités libs JS (jQuery, AngularJS, etc.)
+if [ -n "$HAS_JS$HAS_HTML_INLINE_JS$HAS_PACKAGE_JSON" ]; then
+  if command -v retire >/dev/null; then
+    run_tool "retire" "retire --path '$SRC' --outputformat text --severity medium --colors never 2>&1 || true"
+  else
+    skip_tool "retire" "binaire absent"
+  fi
+else
+  skip_tool "retire" "aucun fichier JS/HTML détecté"
+fi
+
+# pip-audit — vulnérabilités deps Python (alternatif/complément à trivy)
+if [ -n "$HAS_REQUIREMENTS$HAS_PYPROJECT" ]; then
+  PIPAUDIT="${HOME}/.local/bin/pip-audit"
+  [ -x "$PIPAUDIT" ] || PIPAUDIT="$(command -v pip-audit 2>/dev/null || true)"
+  if [ -n "$PIPAUDIT" ] && [ -x "$PIPAUDIT" ]; then
+    if [ -n "$HAS_REQUIREMENTS" ]; then
+      run_tool "pip-audit" "find '$SRC' -name requirements.txt -not -path '*/.venv/*' -not -path '*/venv/*' -type f -print0 | xargs -0 -r -n1 '$PIPAUDIT' --disable-pip --no-deps -r 2>&1 || true"
+    else
+      run_tool "pip-audit" "cd '$SRC' && '$PIPAUDIT' --disable-pip --no-deps 2>&1 || true"
+    fi
+  else
+    skip_tool "pip-audit" "binaire absent"
+  fi
+else
+  skip_tool "pip-audit" "pas de requirements.txt ni pyproject.toml"
+fi
+
+# ─── 5. Wait outils parallèles + reconstruction TOOL_RESULTS ───────────
+if [ "${#TOOL_PIDS[@]}" -gt 0 ]; then
+  echo ""
+  echo "  (attente ${#TOOL_PIDS[@]} outils en parallèle...)"
+  wait "${TOOL_PIDS[@]}" 2>/dev/null || true
+fi
+
+# Recomposer TOOL_RESULTS dans l'ordre déterministe (TOOL_ORDER)
+TOOL_RESULTS=()
+for _name in "${TOOL_ORDER[@]}"; do
+  _m="$MANIFEST_DIR/${_name}.line"
+  if [ -f "$_m" ]; then
+    TOOL_RESULTS+=("$(cat "$_m")")
+  else
+    TOOL_RESULTS+=("$_name|ERREUR|manifest absent|-|-")
+  fi
+done
+
+# ─── 6. Génération rapport markdown ────────────────────────────────────
+echo ""
+echo "[4] Génération rapport"
+
+cat > "$REPORT_PATH" <<EOF
+# Audit sécurité — $CLIENT_NAME
+
+**Date** : $(date -Iseconds)
+**Auditeur** : Claude (ludo-pc-1)
+**Type** : Audit code statique (offline, pas d'attaque réseau)
+
+## Empreinte du dossier audité
+
+| Champ | Valeur |
+|---|---|
+| Chemin | \`$TARGET\` |
+| Fichiers | $TOTAL_FILES |
+| Taille | $TOTAL_SIZE |
+| Hash SHA256 global | \`$INPUT_HASH\` |
+
+## Choix d'outils — preuve d'exécution
+
+| Outil | Statut | Raison / commande | Output |
+|---|---|---|---|
+EOF
+
+for r in "${TOOL_RESULTS[@]}"; do
+  IFS='|' read -r name status reason findings outfile <<< "$r"
+  echo "| \`$name\` | $status | $reason | $findings |" >> "$REPORT_PATH"
+done
+
+cat >> "$REPORT_PATH" <<EOF
+
+## Détails par outil
+EOF
+
+for r in "${TOOL_RESULTS[@]}"; do
+  IFS='|' read -r name status reason findings outfile <<< "$r"
+  if [ "$status" = "LANCÉ" ] && [ -f "$outfile" ]; then
+    echo "" >> "$REPORT_PATH"
+    echo "### $name" >> "$REPORT_PATH"
+    echo '```' >> "$REPORT_PATH"
+    head -100 "$outfile" >> "$REPORT_PATH"
+    [ "$(wc -l < "$outfile")" -gt 100 ] && echo "... ($(wc -l < "$outfile") lignes au total — voir $outfile)" >> "$REPORT_PATH"
+    echo '```' >> "$REPORT_PATH"
+  fi
+done
+
+cat >> "$REPORT_PATH" <<EOF
+
+## Reproductibilité
+
+Pour ré-auditer ce dossier toi-même et vérifier que les findings sont les mêmes :
+
+\`\`\`bash
+client-audit-code "$TARGET" --replay
+\`\`\`
+
+Le mode \`--replay\` désactive le yield mining et garde toutes les sorties brutes.
+
+## Logs complets
+
+Tout l'audit (fingerprint, sorties outils, run.log) est dans :
+\`$LOG_DIR\`
+
+---
+*Généré par client-audit-code v1.0 — Claude on ludo-pc-1*
+EOF
+
+# ─── 6. Cleanup ────────────────────────────────────────────────────────
+echo ""
+if [ "$KEEP" -eq 1 ]; then
+  echo "[5] Cleanup: gardé sur demande ($WORKDIR)"
+else
+  echo "[5] Cleanup: rm -rf $WORKDIR"
+  rm -rf "$WORKDIR"
+fi
+
+# ─── 7. Restore mining ─────────────────────────────────────────────────
+if [ "$REPLAY" -eq 0 ]; then
+  echo ""
+  echo "[6] mine-resume"
+  mine-resume || true
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo "  AUDIT TERMINÉ"
+echo "  Rapport : $REPORT_PATH"
+echo "  Logs    : $LOG_DIR"
+echo "═══════════════════════════════════════════════════════════"

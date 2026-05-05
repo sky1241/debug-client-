@@ -1,0 +1,184 @@
+#!/bin/bash
+# client-audit-diff <prev_logdir> <new_logdir> [--out=<rapport.md>]
+# Compare 2 audits client-audit-code et génère un rapport delta :
+#   - FIXÉ : findings présents dans prev, absents dans new
+#   - NOUVEAU : findings absents dans prev, présents dans new
+#   - INCHANGÉ : findings dans les deux
+set -euo pipefail
+
+PREV="${1:-}"
+NEW="${2:-}"
+OUT=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --out=*) OUT="${arg#--out=}" ;;
+  esac
+done
+
+if [ -z "$PREV" ] || [ -z "$NEW" ]; then
+  cat <<EOF
+Usage: client-audit-diff <prev_logdir> <new_logdir> [--out=<rapport.md>]
+
+Exemple :
+  client-audit-diff \\
+    ~/audit-logs/myclient/2026-05-01-100000/ \\
+    ~/audit-logs/myclient/2026-05-15-093000/ \\
+    --out=~/clients/myclient/delta.md
+
+Les arguments sont les dossiers de logs (contenant les .out de chaque outil).
+EOF
+  exit 1
+fi
+
+[ -d "$PREV" ] || { echo "ERREUR: $PREV n'est pas un dossier" >&2; exit 1; }
+[ -d "$NEW"  ] || { echo "ERREUR: $NEW n'est pas un dossier" >&2; exit 1; }
+
+PREV="$(cd "$PREV" && pwd)"
+NEW="$(cd "$NEW" && pwd)"
+
+if [ -z "$OUT" ]; then
+  OUT="${NEW}/delta-vs-$(basename "$PREV").md"
+fi
+OUT_ABS="$(realpath -m "$OUT")"
+
+echo "═══════════════════════════════════════════════════════════"
+echo "  AUDIT DIFF"
+echo "  prev : $PREV"
+echo "  new  : $NEW"
+echo "  out  : $OUT_ABS"
+echo "═══════════════════════════════════════════════════════════"
+
+# Liste des outils = union de ce qui existe dans prev et new (.out)
+TOOLS=$( (ls "$PREV"/*.out "$NEW"/*.out 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.out$//' | sort -u) || true)
+
+if [ -z "$TOOLS" ]; then
+  echo "ERREUR: aucun .out trouvé dans $PREV ni $NEW" >&2
+  exit 1
+fi
+
+DELTA_TMP="$(mktemp -d)"
+trap 'rm -rf "$DELTA_TMP"' EXIT
+
+# Pour chaque outil, on calcule :
+#   fixed.txt    : lignes dans prev mais pas dans new  (= corrigé par le client)
+#   new.txt      : lignes dans new mais pas dans prev  (= nouvelle régression)
+#   common.txt   : lignes inchangées (intersection)
+N_TOTAL_FIXED=0
+N_TOTAL_NEW=0
+N_TOTAL_COMMON=0
+
+declare -a TOOL_STATS  # tool|prev_n|new_n|fixed|new_findings|common
+
+for tool in $TOOLS; do
+  prev_f="$PREV/${tool}.out"
+  new_f="$NEW/${tool}.out"
+  [ -f "$prev_f" ] || prev_f=/dev/null
+  [ -f "$new_f"  ] || new_f=/dev/null
+
+  # Filtre : ignorer les lignes vides/décoratives/ANSI (awk = pas d'erreur sur fichier vide)
+  filter() {
+    awk '
+      {
+        gsub(/\x1b\[[0-9;]*[a-zA-Z]/, "")
+        if ($0 !~ /^[[:space:]]*$/ && $0 !~ /^[│└┌─┐┘├┤┬┴┼═]/) print
+      }
+    ' "$1" 2>/dev/null | sort -u
+  }
+  filter "$prev_f" > "$DELTA_TMP/${tool}.prev"
+  filter "$new_f"  > "$DELTA_TMP/${tool}.new"
+
+  comm -23 "$DELTA_TMP/${tool}.prev" "$DELTA_TMP/${tool}.new" > "$DELTA_TMP/${tool}.fixed"
+  comm -13 "$DELTA_TMP/${tool}.prev" "$DELTA_TMP/${tool}.new" > "$DELTA_TMP/${tool}.newfind"
+  comm -12 "$DELTA_TMP/${tool}.prev" "$DELTA_TMP/${tool}.new" > "$DELTA_TMP/${tool}.common"
+
+  prev_n=$(wc -l < "$DELTA_TMP/${tool}.prev")
+  new_n=$(wc -l < "$DELTA_TMP/${tool}.new")
+  fixed_n=$(wc -l < "$DELTA_TMP/${tool}.fixed")
+  newfind_n=$(wc -l < "$DELTA_TMP/${tool}.newfind")
+  common_n=$(wc -l < "$DELTA_TMP/${tool}.common")
+
+  N_TOTAL_FIXED=$((N_TOTAL_FIXED + fixed_n))
+  N_TOTAL_NEW=$((N_TOTAL_NEW + newfind_n))
+  N_TOTAL_COMMON=$((N_TOTAL_COMMON + common_n))
+
+  TOOL_STATS+=("$tool|$prev_n|$new_n|$fixed_n|$newfind_n|$common_n")
+done
+
+# ─── Rapport markdown ──────────────────────────────────────────────────
+cat > "$OUT_ABS" <<EOF
+# Delta audit — $(basename "$NEW") vs $(basename "$PREV")
+
+**Date diff** : $(date -Iseconds)
+**Avant**  : \`$PREV\`
+**Après**  : \`$NEW\`
+
+## Résumé
+
+| Métrique | Total |
+|---|---:|
+| Findings fixés  | **$N_TOTAL_FIXED** |
+| Findings nouveaux | **$N_TOTAL_NEW** |
+| Findings inchangés | $N_TOTAL_COMMON |
+
+## Détail par outil
+
+| Outil | Avant | Après | Fixés | Nouveaux | Inchangés |
+|---|---:|---:|---:|---:|---:|
+EOF
+
+for s in "${TOOL_STATS[@]}"; do
+  IFS='|' read -r tool prev_n new_n fixed_n newfind_n common_n <<< "$s"
+  echo "| \`$tool\` | $prev_n | $new_n | $fixed_n | $newfind_n | $common_n |" >> "$OUT_ABS"
+done
+
+cat >> "$OUT_ABS" <<EOF
+
+## ✅ Findings fixés
+
+EOF
+
+for s in "${TOOL_STATS[@]}"; do
+  IFS='|' read -r tool prev_n new_n fixed_n newfind_n common_n <<< "$s"
+  if [ "$fixed_n" -gt 0 ]; then
+    echo "### $tool ($fixed_n fixé(s))" >> "$OUT_ABS"
+    echo '```' >> "$OUT_ABS"
+    head -50 "$DELTA_TMP/${tool}.fixed" >> "$OUT_ABS"
+    [ "$fixed_n" -gt 50 ] && echo "... ($fixed_n total)" >> "$OUT_ABS"
+    echo '```' >> "$OUT_ABS"
+    echo "" >> "$OUT_ABS"
+  fi
+done
+
+cat >> "$OUT_ABS" <<EOF
+
+## 🚨 Findings nouveaux (régressions)
+
+EOF
+
+for s in "${TOOL_STATS[@]}"; do
+  IFS='|' read -r tool prev_n new_n fixed_n newfind_n common_n <<< "$s"
+  if [ "$newfind_n" -gt 0 ]; then
+    echo "### $tool ($newfind_n nouveau(x))" >> "$OUT_ABS"
+    echo '```' >> "$OUT_ABS"
+    head -50 "$DELTA_TMP/${tool}.newfind" >> "$OUT_ABS"
+    [ "$newfind_n" -gt 50 ] && echo "... ($newfind_n total)" >> "$OUT_ABS"
+    echo '```' >> "$OUT_ABS"
+    echo "" >> "$OUT_ABS"
+  fi
+done
+
+cat >> "$OUT_ABS" <<EOF
+
+---
+*Généré par client-audit-diff — Claude on ludo-pc-1*
+EOF
+
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo "  DIFF TERMINÉ"
+echo "  Fixés    : $N_TOTAL_FIXED"
+echo "  Nouveaux : $N_TOTAL_NEW"
+echo "  Inchangés: $N_TOTAL_COMMON"
+echo "  Rapport  : $OUT_ABS"
+echo "═══════════════════════════════════════════════════════════"

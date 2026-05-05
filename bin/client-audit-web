@@ -1,0 +1,221 @@
+#!/bin/bash
+# client-audit-web <url> <chemin-pdf-ordre-mission|LAN-AUTO-pour-loopback>
+# Web pentest avec garde-fous légaux + run_tool structuré + timeout par outil.
+set -euo pipefail
+
+URL="${1:-}"
+PDF="${2:-}"
+AUDIT_TOOL_TIMEOUT="${AUDIT_TOOL_TIMEOUT:-600}"
+
+if [ -z "$URL" ] || [ -z "$PDF" ]; then
+  cat <<EOF
+Usage: client-audit-web <URL> <chemin-PDF-ordre-de-mission>
+
+⚠ AUTORISATION ÉCRITE OBLIGATOIRE.
+   Sans PDF d'ordre de mission valide, le scan est ANNULÉ.
+   Le PDF doit nommer la cible et être signé par le client.
+
+Exception loopback : LAN-AUTO accepté si URL pointe sur 127.0.0.1/localhost.
+
+Exemple :
+  client-audit-web https://app.client-x.com ~/clients/CLIENT_X/ordre-mission.pdf
+  client-audit-web http://127.0.0.1:8081 LAN-AUTO
+
+Variables d'environnement :
+  AUDIT_TOOL_TIMEOUT  timeout par outil en secondes (default: 600)
+
+Cadre légal Suisse (art. 143bis CP) : pas de papier = pas de scan.
+EOF
+  exit 1
+fi
+
+# Détection loopback pour exception LAN-AUTO
+IS_LOOPBACK=0
+if [[ "$URL" =~ ^https?://(127\.|localhost|::1) ]]; then
+  IS_LOOPBACK=1
+fi
+
+if [ "$IS_LOOPBACK" -eq 1 ] && [ "$PDF" = "LAN-AUTO" ]; then
+  echo "✓ Cible loopback ($URL) — auto-autorisé sans PDF"
+else
+  # Garde-fou : PDF doit exister + > 1KB
+  [ -f "$PDF" ] || { echo "ERREUR: PDF introuvable: $PDF" >&2; exit 1; }
+  [ "$(stat -c%s "$PDF")" -gt 1000 ] || { echo "ERREUR: PDF suspicieusement petit (<1KB): $PDF" >&2; exit 1; }
+
+  echo "═══ CONFIRMATION ORDRE DE MISSION ═══"
+  echo "Cible      : $URL"
+  echo "Document   : $PDF"
+  echo "Hash PDF   : $(sha256sum "$PDF" | cut -d' ' -f1)"
+  echo ""
+  echo "Confirme par écrit que :"
+  echo "  1. Le PDF $PDF est un ordre de mission signé"
+  echo "  2. La cible $URL est bien celle autorisée par ce document"
+  echo "  3. Tu acceptes la responsabilité légale de cette opération"
+  echo ""
+  read -p "Tape exactement 'OUI JE CONFIRME' pour continuer : " confirmation
+  [ "$confirmation" = "OUI JE CONFIRME" ] || { echo "ANNULÉ."; exit 1; }
+fi
+
+DOMAIN=$(echo "$URL" | sed -E 's|^https?://||;s|/.*||;s|:.*||')
+DATE_TAG="$(date +%Y-%m-%d-%H%M%S)"
+LOG_DIR="$HOME/audit-logs/web/${DOMAIN}/${DATE_TAG}"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/run.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+if [ "$IS_LOOPBACK" -eq 0 ]; then
+  cp "$PDF" "$LOG_DIR/ordre-mission.pdf"
+  sha256sum "$PDF" > "$LOG_DIR/ordre-mission.pdf.sha256"
+fi
+echo "$URL" > "$LOG_DIR/cible.txt"
+date -Iseconds > "$LOG_DIR/datetime.txt"
+
+REPORT="$LOG_DIR/rapport.md"
+
+echo "═══════════════════════════════════════════════════════════"
+echo "  AUDIT WEB — $DOMAIN"
+echo "  date    : $(date -Iseconds)"
+echo "  cible   : $URL"
+echo "  logs    : $LOG_DIR"
+echo "  timeout : ${AUDIT_TOOL_TIMEOUT}s par outil"
+echo "═══════════════════════════════════════════════════════════"
+
+mine-yield 25 || true
+trap 'mine-resume 2>/dev/null || true' EXIT
+
+# ─── run_tool / skip_tool ──────────────────────────────────────────────
+declare -a TOOL_RESULTS
+
+run_tool() {
+  local name="$1"; local cmd="$2"; local outfile="$LOG_DIR/${name}.out"
+  echo "  → $name"
+  if timeout "${AUDIT_TOOL_TIMEOUT}" bash -c "$cmd" > "$outfile" 2>&1; then
+    local n="$(wc -l < "$outfile")"
+    TOOL_RESULTS+=("$name|LANCÉ|-|$n lignes|$outfile")
+  else
+    local code="$?"
+    local n="$(wc -l < "$outfile")"
+    if [ "$code" -eq 124 ]; then
+      TOOL_RESULTS+=("$name|TIMEOUT|>${AUDIT_TOOL_TIMEOUT}s|$n lignes (partiel)|$outfile")
+    else
+      TOOL_RESULTS+=("$name|LANCÉ|exit=$code|$n lignes|$outfile")
+    fi
+  fi
+}
+
+skip_tool() {
+  local name="$1"; local reason="$2"
+  echo "  ⊘ $name (skip: $reason)"
+  TOOL_RESULTS+=("$name|SKIPPÉ|$reason|-|-")
+}
+
+# ─── [1] Fingerprint passif ────────────────────────────────────────────
+echo ""
+echo "[1] Fingerprint passif"
+audit-fingerprint "$URL" > "$LOG_DIR/fingerprint.txt" 2>&1 || true
+head -20 "$LOG_DIR/fingerprint.txt" || true
+
+# ─── [2] Outils ciblés ─────────────────────────────────────────────────
+echo ""
+echo "[2] Outils ciblés"
+
+# whatweb fingerprint techno
+if command -v whatweb >/dev/null; then
+  run_tool "whatweb" "whatweb -a 3 '$URL'"
+else
+  skip_tool "whatweb" "binaire absent"
+fi
+
+# nikto — vulns serveur web classiques
+if command -v nikto >/dev/null; then
+  run_tool "nikto" "nikto -h '$URL' -nointeractive -ask no -maxtime $((AUDIT_TOOL_TIMEOUT - 30))s"
+else
+  skip_tool "nikto" "binaire absent"
+fi
+
+# nuclei — templates CVE (severity medium+)
+NUCLEI="${HOME}/go/bin/nuclei"
+[ -x "$NUCLEI" ] || NUCLEI="$(command -v nuclei 2>/dev/null || true)"
+if [ -n "$NUCLEI" ] && [ -x "$NUCLEI" ]; then
+  run_tool "nuclei" "'$NUCLEI' -u '$URL' -severity medium,high,critical -silent -no-color"
+else
+  skip_tool "nuclei" "binaire absent"
+fi
+
+# wpscan SI WordPress détecté
+if [ -f "$LOG_DIR/whatweb.out" ] && grep -qi "wordpress" "$LOG_DIR/whatweb.out" 2>/dev/null; then
+  if command -v wpscan >/dev/null; then
+    run_tool "wpscan" "wpscan --url '$URL' --no-update --random-user-agent --no-banner"
+  else
+    skip_tool "wpscan" "binaire absent"
+  fi
+else
+  skip_tool "wpscan" "pas de WordPress détecté"
+fi
+
+# ─── [3] Génération rapport markdown ───────────────────────────────────
+echo ""
+echo "[3] Génération rapport"
+
+cat > "$REPORT" <<EOF
+# Audit web — $DOMAIN
+
+**Date** : $(date -Iseconds)
+**Cible** : $URL
+**Mode**  : $([ "$IS_LOOPBACK" -eq 1 ] && echo "Loopback (auto-autorisé)" || echo "Externe — ordre mission $(basename "$PDF") sha256=$(sha256sum "$PDF" 2>/dev/null | cut -d' ' -f1)")
+**Timeout par outil** : ${AUDIT_TOOL_TIMEOUT}s
+
+## Outils — preuve d'exécution
+
+| Outil | Statut | Détail | Output |
+|---|---|---|---|
+EOF
+
+for r in "${TOOL_RESULTS[@]}"; do
+  IFS='|' read -r name status reason findings outfile <<< "$r"
+  echo "| \`$name\` | $status | $reason | $findings |" >> "$REPORT"
+done
+
+cat >> "$REPORT" <<EOF
+
+## Fingerprint
+\`\`\`
+$(head -40 "$LOG_DIR/fingerprint.txt" 2>/dev/null)
+\`\`\`
+
+## Détails par outil
+EOF
+
+for r in "${TOOL_RESULTS[@]}"; do
+  IFS='|' read -r name status reason findings outfile <<< "$r"
+  if { [ "$status" = "LANCÉ" ] || [ "$status" = "TIMEOUT" ]; } && [ -f "$outfile" ]; then
+    echo "" >> "$REPORT"
+    echo "### $name" >> "$REPORT"
+    echo '```' >> "$REPORT"
+    head -100 "$outfile" >> "$REPORT"
+    [ "$(wc -l < "$outfile")" -gt 100 ] && echo "... ($(wc -l < "$outfile") lignes au total — voir $outfile)" >> "$REPORT"
+    echo '```' >> "$REPORT"
+  fi
+done
+
+cat >> "$REPORT" <<EOF
+
+## Reproductibilité
+\`\`\`bash
+client-audit-web "$URL" "$([ "$IS_LOOPBACK" -eq 1 ] && echo "LAN-AUTO" || echo "$PDF")"
+\`\`\`
+
+## Logs complets
+\`$LOG_DIR/\`
+
+---
+*Généré par client-audit-web v2 — Claude on ludo-pc-1*
+EOF
+
+echo ""
+echo "═══════════════════════════════════════════════════════════"
+echo "  AUDIT WEB TERMINÉ"
+echo "  Rapport : $REPORT"
+echo "  Logs    : $LOG_DIR"
+echo "═══════════════════════════════════════════════════════════"
+mine-resume || true
