@@ -1,0 +1,28 @@
+# Lock des versions outils SAST/secrets/IaC validés sur cette stack.
+# Auto-généré par audit-doctor --bump. Format : <tool>=<version>
+# Date génération : 2026-05-05T16:08:02+02:00
+
+bandit=1.7.10
+gosec=dev
+eslint=10.3.0
+phpstan=2.1.54
+brakeman=8.0.4
+bundler-audit=0.9.3
+cargo-audit=0.22.1
+cppcheck=2.20.0
+flawfinder=2.0.19
+shellcheck=0.11.0
+yamllint=1.38.0
+semgrep=1.161.0
+trufflehog3=3.0.10
+gitleaks=process
+trivy=0.70.0
+pip-audit=2.10.0
+retire=5.4.2
+clamav=1.4.4
+osv-scanner=2.3.6
+checkov=3.2.526
+syft=1.44.0
+grype=0.112.0
+dockle=0.4.15
+firejail=0.9.80

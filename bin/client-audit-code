@@ -69,7 +69,12 @@ echo "  rapport : $REPORT_PATH"
 echo "  logs    : $LOG_DIR"
 echo "═══════════════════════════════════════════════════════════"
 
-# ─── 0. Yield mining ───────────────────────────────────────────────────
+# ─── 0a. Caches CVE/NVD persistants (évite re-télécharge à chaque run) ─
+export TRIVY_CACHE_DIR="${TRIVY_CACHE_DIR:-${HOME}/.cache/audit-stack/trivy}"
+export GRYPE_DB_CACHE_DIR="${GRYPE_DB_CACHE_DIR:-${HOME}/.cache/audit-stack/grype}"
+mkdir -p "$TRIVY_CACHE_DIR" "$GRYPE_DB_CACHE_DIR" 2>/dev/null || true
+
+# ─── 0b. Yield mining ──────────────────────────────────────────────────
 if [ "$REPLAY" -eq 0 ]; then
   echo ""
   echo "[0] mine-yield 25 (libère 75% CPU pour l'audit)"

@@ -1,0 +1,8 @@
+# sha256sum des wrappers — généré par audit-doctor --bump
+de68d095f0e0001671b762a70ae7190d777d05888f1185400a4d8ce2d7dc115a  bin/audit-doctor
+c7ae9e4cca8ce6b70e3e2ff8e5cb037add6416fef75be41db5015439009c7784  bin/audit-fingerprint
+701f1f3fcd1c0c65373feb1ea16764d3ae11bf2f984cbab0b62220f25349ff88  bin/client-audit-code
+bccd1f877830875c113c10862e5603427fb8fc14d68d5a9a05d2d66a278cc095  bin/client-audit-diff
+82f027ecb27129b79a653115e8fb47d6b63e02281ccccb577757a726621ff133  bin/client-audit-net
+7ca670d0843d6f6b0556896aaf62e11de2c469b4873984430c9c4927a2e6002d  bin/client-audit-test
+e4a0b9bd6997f4b734ccfc58548d8a40e99a8d7c2bf8f569afaf2af552b2238f  bin/client-audit-web

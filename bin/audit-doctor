@@ -1,0 +1,169 @@
+#!/bin/bash
+# audit-doctor — vérifie l'environnement de la stack pentest claude-tooling.
+# Compare les versions installées vs tool-versions.lock, vérifie la présence
+# des binaires, l'état des caches, l'intégrité des wrappers.
+set -uo pipefail
+
+REPO="${CLAUDE_TOOLING_REPO:-${HOME}/.claude-tooling}"
+LOCK="${REPO}/tool-versions.lock"
+CHECKSUMS="${REPO}/bin/.checksums"
+
+usage() {
+  cat <<EOF
+Usage: audit-doctor [--bump] [--quiet]
+  (sans option) : vérifie l'environnement et liste les anomalies
+  --bump        : régénère tool-versions.lock avec les versions courantes
+  --quiet       : sortie minimale, juste exit code (0 OK, 1 problème)
+EOF
+}
+
+BUMP=0
+QUIET=0
+for arg in "$@"; do
+  case "$arg" in
+    --bump) BUMP=1 ;;
+    --quiet) QUIET=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Option inconnue: $arg" >&2; usage; exit 1 ;;
+  esac
+done
+
+# Helper : récupère la version actuelle d'un outil.
+# Retourne "unknown" si le binaire est absent ou si extraction échoue.
+get_version() {
+  local tool="$1"
+  case "$tool" in
+    bandit)        bandit --version 2>&1 | head -1 | awk '{print $2}' ;;
+    gosec)         "$HOME/go/bin/gosec" -version 2>&1 | grep -i '^Version' | awk '{print $2}' ;;
+    eslint)        eslint --version 2>&1 | head -1 | tr -d 'v' ;;
+    phpstan)       "$HOME/.config/composer/vendor/bin/phpstan" --version --no-ansi 2>&1 | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 ;;
+    brakeman)      brakeman --version 2>&1 | head -1 | awk '{print $2}' ;;
+    bundler-audit) bundler-audit version 2>&1 | head -1 | awk '{print $NF}' ;;
+    cargo-audit)   "$HOME/.cargo/bin/cargo-audit" --version 2>&1 | head -1 | awk '{print $2}' ;;
+    cppcheck)      cppcheck --version 2>&1 | head -1 | awk '{print $2}' ;;
+    flawfinder)    flawfinder --version 2>&1 | head -1 | awk '{print $NF}' ;;
+    shellcheck)    shellcheck --version 2>&1 | grep -i '^version:' | awk '{print $2}' ;;
+    yamllint)      yamllint --version 2>&1 | awk '{print $2}' ;;
+    semgrep)       semgrep --version 2>&1 | head -1 ;;
+    trufflehog3)   trufflehog3 --version 2>&1 | head -1 | awk '{print $NF}' ;;
+    gitleaks)      gitleaks version 2>&1 | head -1 | awk '{print $NF}' ;;
+    trivy)         trivy --version 2>&1 | head -1 | awk '{print $2}' ;;
+    pip-audit)     "$HOME/.local/bin/pip-audit" --version 2>&1 | head -1 | awk '{print $2}' ;;
+    retire)        retire --version 2>&1 | head -1 ;;
+    clamav)        clamscan --version 2>&1 | head -1 | awk '{print $2}' | cut -d/ -f1 ;;
+    osv-scanner)   osv-scanner --version 2>&1 | head -1 | awk '{print $NF}' ;;
+    checkov)       checkov --version 2>&1 | head -1 ;;
+    syft)          syft version 2>&1 | grep -i '^Version:' | awk '{print $2}' ;;
+    grype)         grype version 2>&1 | grep -i '^Version:' | awk '{print $2}' ;;
+    dockle)        dockle --version 2>&1 | head -1 | awk '{print $NF}' ;;
+    firejail)      firejail --version 2>&1 | head -1 | awk '{print $NF}' ;;
+    *) echo "unknown" ;;
+  esac
+}
+
+# --bump : régénère le lock
+if [ "$BUMP" -eq 1 ]; then
+  echo "Régénération $LOCK"
+  TOOLS="bandit gosec eslint phpstan brakeman bundler-audit cargo-audit cppcheck flawfinder shellcheck yamllint semgrep trufflehog3 gitleaks trivy pip-audit retire clamav osv-scanner checkov syft grype dockle firejail"
+  {
+    echo "# Lock des versions outils SAST/secrets/IaC validés sur cette stack."
+    echo "# Auto-généré par audit-doctor --bump. Format : <tool>=<version>"
+    echo "# Date génération : $(date -Iseconds)"
+    echo ""
+    for t in $TOOLS; do
+      v="$(get_version "$t" 2>/dev/null || echo unknown)"
+      [ -n "$v" ] || v="unknown"
+      echo "${t}=${v}"
+    done
+  } > "$LOCK"
+  echo "✓ $(grep -cE '^[a-z]' "$LOCK") outils enregistrés"
+  exit 0
+fi
+
+# Mode vérif : compare actuel vs lock
+[ -f "$LOCK" ] || { echo "ERREUR: $LOCK introuvable. Lance 'audit-doctor --bump' une fois." >&2; exit 1; }
+
+PROBLEMS=0
+MISSING=0
+DRIFT=0
+OK=0
+
+[ "$QUIET" -eq 0 ] && {
+  echo "═══════════════════════════════════════════════════════════"
+  echo "  AUDIT-DOCTOR — vérif environnement claude-tooling"
+  echo "  lock : $LOCK"
+  echo "═══════════════════════════════════════════════════════════"
+  echo ""
+  printf "%-18s %-15s %-15s %s\n" "OUTIL" "ATTENDU" "ACTUEL" "STATUT"
+  printf "%-18s %-15s %-15s %s\n" "-----" "-------" "------" "------"
+}
+
+while IFS='=' read -r tool expected; do
+  [[ "$tool" =~ ^# ]] && continue
+  [[ -z "$tool" ]] && continue
+  actual="$(get_version "$tool" 2>/dev/null || echo unknown)"
+  [ -n "$actual" ] || actual="unknown"
+
+  if [ "$actual" = "unknown" ] || [ -z "$actual" ]; then
+    [ "$QUIET" -eq 0 ] && printf "%-18s %-15s %-15s \033[31m%s\033[0m\n" "$tool" "$expected" "${actual:-MISSING}" "MISSING"
+    MISSING=$((MISSING + 1))
+    PROBLEMS=$((PROBLEMS + 1))
+  elif [ "$actual" != "$expected" ]; then
+    [ "$QUIET" -eq 0 ] && printf "%-18s %-15s %-15s \033[33m%s\033[0m\n" "$tool" "$expected" "$actual" "DRIFT"
+    DRIFT=$((DRIFT + 1))
+  else
+    [ "$QUIET" -eq 0 ] && printf "%-18s %-15s %-15s \033[32m%s\033[0m\n" "$tool" "$expected" "$actual" "OK"
+    OK=$((OK + 1))
+  fi
+done < "$LOCK"
+
+# Vérif checksums wrappers (anti-tampering)
+CKSUM_OK=0; CKSUM_DIFF=0
+if [ -f "$CHECKSUMS" ]; then
+  [ "$QUIET" -eq 0 ] && echo "" && echo "── Wrappers (sha256) ──"
+  while IFS='  ' read -r expected_hash file; do
+    [[ "$expected_hash" =~ ^# ]] && continue
+    [[ -z "$expected_hash" ]] && continue
+    full_path="${REPO}/${file}"
+    if [ -f "$full_path" ]; then
+      actual_hash="$(sha256sum "$full_path" 2>/dev/null | awk '{print $1}')"
+      if [ "$actual_hash" = "$expected_hash" ]; then
+        [ "$QUIET" -eq 0 ] && printf "  \033[32m✓\033[0m %s\n" "$file"
+        CKSUM_OK=$((CKSUM_OK + 1))
+      else
+        [ "$QUIET" -eq 0 ] && printf "  \033[31m✗ TAMPERED\033[0m %s (hash mismatch)\n" "$file"
+        CKSUM_DIFF=$((CKSUM_DIFF + 1))
+        PROBLEMS=$((PROBLEMS + 1))
+      fi
+    else
+      [ "$QUIET" -eq 0 ] && printf "  \033[33m⚠ MISSING\033[0m %s\n" "$file"
+    fi
+  done < "$CHECKSUMS"
+else
+  [ "$QUIET" -eq 0 ] && echo "" && echo "── Checksums : $CHECKSUMS absent (lance 'audit-doctor --bump' pour générer) ──"
+fi
+
+# Vérif caches
+CACHE_DIR="${HOME}/.cache/audit-stack"
+[ "$QUIET" -eq 0 ] && {
+  echo ""
+  echo "── Caches CVE/NVD ──"
+  for c in trivy grype osv-scanner; do
+    if [ -d "$CACHE_DIR/$c" ]; then
+      size=$(du -sh "$CACHE_DIR/$c" 2>/dev/null | cut -f1)
+      printf "  %-15s %s (%s)\n" "$c:" "$CACHE_DIR/$c" "$size"
+    else
+      printf "  %-15s \033[33mabsent\033[0m\n" "$c:"
+    fi
+  done
+}
+
+# Résumé
+[ "$QUIET" -eq 0 ] && {
+  echo ""
+  echo "═══════════════════════════════════════════════════════════"
+  echo "  RÉSULTAT : $OK OK / $DRIFT DRIFT / $MISSING MISSING / $CKSUM_DIFF TAMPERED"
+  echo "═══════════════════════════════════════════════════════════"
+}
+
+[ "$PROBLEMS" -eq 0 ] && exit 0 || exit 1
