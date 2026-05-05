@@ -123,6 +123,17 @@ def test_021_prod_blocks_git_head() -> None:
     assert p.stdout.strip() == "404", f"prod expose .git/HEAD ! code={p.stdout!r}"
 
 
+def test_022_prod_blocks_git_config() -> None:
+    """TESTS.md #22 — `haoyanwuying.com/.git/config` retourne 404."""
+    p = subprocess.run(
+        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+         "--max-time", "10", "https://haoyanwuying.com/.git/config"],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert p.returncode == 0
+    assert p.stdout.strip() == "404", f"prod expose .git/config ! code={p.stdout!r}"
+
+
 
 
 def test_016_http_server_serves_repo(http_server: int) -> None:
