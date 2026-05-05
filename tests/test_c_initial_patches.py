@@ -8,6 +8,22 @@ from pathlib import Path
 from conftest import BIN_DIR, run_wrapper
 
 
+def test_030_shellcheck_severity_info(tmp_path: Path) -> None:
+    """TESTS.md #30 — Le wrapper invoque shellcheck en `--severity=info` (détecte SC2086)."""
+    code = (BIN_DIR / "client-audit-code").read_text()
+    assert "shellcheck" in code, "appel shellcheck absent"
+    assert "--severity=info" in code, \
+        f"shellcheck --severity=info absent (régression chunk 30)"
+    # Sanity check : sur un fichier piégé avec $1 non quoté, shellcheck (--severity=info) trouve SC2086
+    bad = tmp_path / "bad.sh"
+    bad.write_text("#!/bin/bash\nrm -rf $1\n")
+    p = subprocess.run(
+        ["shellcheck", "--severity=info", "--format=gcc", str(bad)],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert "SC2086" in (p.stdout + p.stderr), f"SC2086 non détecté en mode info"
+
+
 def test_029_has_bin_excludes_git_and_images() -> None:
     """TESTS.md #29 — HAS_BIN exclut .git/* + extensions images (sshfs marque tout exécutable)."""
     code = (BIN_DIR / "client-audit-code").read_text()
