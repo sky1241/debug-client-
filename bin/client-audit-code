@@ -188,7 +188,23 @@ HAS_BIN=$(find "$SRC" -type f -executable -size +1k \
 echo ""
 AUDIT_PARALLEL="${AUDIT_PARALLEL:-1}"
 AUDIT_TOOL_TIMEOUT="${AUDIT_TOOL_TIMEOUT:-300}"
-echo "[3] Lancement outils pertinents (parallèle=${AUDIT_PARALLEL}, timeout=${AUDIT_TOOL_TIMEOUT}s)"
+AUDIT_SANDBOX="${AUDIT_SANDBOX:-0}"
+SANDBOX_PROFILE="${SANDBOX_PROFILE:-${HOME}/.claude-tooling/firejail/claude-audit.profile}"
+
+# Construction du préfixe sandbox une fois (pour éviter répétition par worker)
+SANDBOX_PREFIX=""
+if [ "$AUDIT_SANDBOX" = "1" ]; then
+  if ! command -v firejail >/dev/null; then
+    echo "  ⚠ AUDIT_SANDBOX=1 demandé mais firejail absent — passé en mode non-sandboxé" >&2
+    AUDIT_SANDBOX=0
+  elif [ ! -f "$SANDBOX_PROFILE" ]; then
+    echo "  ⚠ Profil sandbox introuvable : $SANDBOX_PROFILE — passé en mode non-sandboxé" >&2
+    AUDIT_SANDBOX=0
+  else
+    SANDBOX_PREFIX="firejail --quiet --profile=$SANDBOX_PROFILE --"
+  fi
+fi
+echo "[3] Lancement outils pertinents (parallèle=${AUDIT_PARALLEL}, timeout=${AUDIT_TOOL_TIMEOUT}s, sandbox=${AUDIT_SANDBOX})"
 
 declare -a TOOL_RESULTS
 declare -a TOOL_ORDER
@@ -197,20 +213,31 @@ MANIFEST_DIR="$LOG_DIR/.manifests"
 mkdir -p "$MANIFEST_DIR"
 
 # Worker exécuté en sub-shell : timeout + capture output + écriture manifest atomique
+# Si AUDIT_SANDBOX=1 : la commande tourne dans firejail (drop privs, blacklist secrets)
+# La commande de l'outil est écrite dans un script .run-NAME.sh pour éviter
+# les enfers de quoting bash -c "...$cmd...". Le script est lu par bash directement.
 _run_one_inline() {
   local name="$1" cmd="$2"
   local outfile="$LOG_DIR/${name}.out"
   local manifest="$MANIFEST_DIR/${name}.line"
-  if timeout "${AUDIT_TOOL_TIMEOUT}" bash -c "set -o pipefail; $cmd" > "$outfile" 2>&1; then
+  local script_file="$MANIFEST_DIR/.run-${name}.sh"
+  printf '#!/bin/bash\nset -o pipefail\n%s\n' "$cmd" > "$script_file"
+  chmod +x "$script_file"
+  local rc=0
+  if [ -n "$SANDBOX_PREFIX" ]; then
+    timeout "${AUDIT_TOOL_TIMEOUT}" $SANDBOX_PREFIX bash "$script_file" > "$outfile" 2>&1 || rc=$?
+  else
+    timeout "${AUDIT_TOOL_TIMEOUT}" bash "$script_file" > "$outfile" 2>&1 || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
     local n; n="$(wc -l < "$outfile")"
     printf "%s|LANCÉ|-|%s lignes output|%s\n" "$name" "$n" "$outfile" > "$manifest"
   else
-    local code="$?"
     local n; n="$(wc -l < "$outfile")"
-    if [ "$code" -eq 124 ]; then
+    if [ "$rc" -eq 124 ]; then
       printf "%s|TIMEOUT|>%ss|%s lignes (partiel)|%s\n" "$name" "${AUDIT_TOOL_TIMEOUT}" "$n" "$outfile" > "$manifest"
     else
-      printf "%s|LANCÉ|exit=%s|%s lignes output|%s\n" "$name" "$code" "$n" "$outfile" > "$manifest"
+      printf "%s|LANCÉ|exit=%s|%s lignes output|%s\n" "$name" "$rc" "$n" "$outfile" > "$manifest"
     fi
   fi
 }
