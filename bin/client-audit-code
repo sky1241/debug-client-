@@ -189,7 +189,14 @@ echo ""
 AUDIT_PARALLEL="${AUDIT_PARALLEL:-1}"
 AUDIT_TOOL_TIMEOUT="${AUDIT_TOOL_TIMEOUT:-300}"
 AUDIT_SANDBOX="${AUDIT_SANDBOX:-0}"
+AUDIT_OFFLINE="${AUDIT_OFFLINE:-0}"
 SANDBOX_PROFILE="${SANDBOX_PROFILE:-${HOME}/.claude-tooling/firejail/claude-audit.profile}"
+
+# Mode offline implique sandbox (pas d'autre moyen de bloquer le réseau d'un outil sinon)
+if [ "$AUDIT_OFFLINE" = "1" ] && [ "$AUDIT_SANDBOX" != "1" ]; then
+  echo "  ℹ AUDIT_OFFLINE=1 → AUDIT_SANDBOX forcé à 1 (firejail --net=none requis)"
+  AUDIT_SANDBOX=1
+fi
 
 # Construction du préfixe sandbox une fois (pour éviter répétition par worker)
 SANDBOX_PREFIX=""
@@ -197,14 +204,20 @@ if [ "$AUDIT_SANDBOX" = "1" ]; then
   if ! command -v firejail >/dev/null; then
     echo "  ⚠ AUDIT_SANDBOX=1 demandé mais firejail absent — passé en mode non-sandboxé" >&2
     AUDIT_SANDBOX=0
+    AUDIT_OFFLINE=0
   elif [ ! -f "$SANDBOX_PROFILE" ]; then
     echo "  ⚠ Profil sandbox introuvable : $SANDBOX_PROFILE — passé en mode non-sandboxé" >&2
     AUDIT_SANDBOX=0
+    AUDIT_OFFLINE=0
   else
-    SANDBOX_PREFIX="firejail --quiet --profile=$SANDBOX_PROFILE --"
+    SANDBOX_PREFIX="firejail --quiet --profile=$SANDBOX_PROFILE"
+    if [ "$AUDIT_OFFLINE" = "1" ]; then
+      SANDBOX_PREFIX="$SANDBOX_PREFIX --net=none"
+    fi
+    SANDBOX_PREFIX="$SANDBOX_PREFIX --"
   fi
 fi
-echo "[3] Lancement outils pertinents (parallèle=${AUDIT_PARALLEL}, timeout=${AUDIT_TOOL_TIMEOUT}s, sandbox=${AUDIT_SANDBOX})"
+echo "[3] Lancement outils pertinents (parallèle=${AUDIT_PARALLEL}, timeout=${AUDIT_TOOL_TIMEOUT}s, sandbox=${AUDIT_SANDBOX}, offline=${AUDIT_OFFLINE})"
 
 declare -a TOOL_RESULTS
 declare -a TOOL_ORDER
@@ -261,9 +274,20 @@ skip_tool() {
   printf "%s|SKIPPÉ|%s|-|-\n" "$name" "$reason" > "$MANIFEST_DIR/${name}.line"
 }
 
+# Helper : ne lance le tool que si réseau disponible. Sinon SKIP propre.
+# Utilisé pour les outils qui interrogent des registres distants (advisory DBs, API).
+run_tool_online() {
+  local name="$1" cmd="$2" net_reason="${3:-réseau requis (registry/advisory-db distants)}"
+  if [ "$AUDIT_OFFLINE" = "1" ]; then
+    skip_tool "$name" "AUDIT_OFFLINE=1, $net_reason"
+  else
+    run_tool "$name" "$cmd"
+  fi
+}
+
 # semgrep — toujours pertinent (multi-langage, règles auto)
 if command -v semgrep >/dev/null; then
-  run_tool "semgrep" "semgrep scan --config=p/security-audit --config=p/secrets --no-git-ignore --metrics=off --disable-version-check '$SRC'"
+  run_tool_online "semgrep" "semgrep scan --config=p/security-audit --config=p/secrets --no-git-ignore --metrics=off --disable-version-check '$SRC'" "semgrep télécharge p/security-audit + p/secrets depuis le registry"
 else
   skip_tool "semgrep" "binaire absent"
 fi
@@ -451,7 +475,7 @@ fi
 # bundler-audit — Ruby gems CVE check
 if [ -n "$HAS_GEMFILE_LOCK" ]; then
   if command -v bundler-audit >/dev/null; then
-    run_tool "bundler-audit" "cd '$SRC' && bundler-audit check --update 2>&1 || true"
+    run_tool_online "bundler-audit" "cd '$SRC' && bundler-audit check --update 2>&1 || true" "bundler-audit --update clone ruby-advisory-db"
   else
     skip_tool "bundler-audit" "binaire absent"
   fi
@@ -543,7 +567,7 @@ fi
 # retire.js — vulnérabilités libs JS (jQuery, AngularJS, etc.)
 if [ -n "$HAS_JS$HAS_HTML_INLINE_JS$HAS_PACKAGE_JSON" ]; then
   if command -v retire >/dev/null; then
-    run_tool "retire" "retire --path '$SRC' --outputformat text --severity medium --colors never 2>&1 || true"
+    run_tool_online "retire" "retire --path '$SRC' --outputformat text --severity medium --colors never 2>&1 || true" "retire télécharge jsrepository-v5.json"
   else
     skip_tool "retire" "binaire absent"
   fi
@@ -573,7 +597,7 @@ if [ -n "$HAS_ANY_LOCK" ]; then
   OSVSCAN="${HOME}/go/bin/osv-scanner"
   [ -x "$OSVSCAN" ] || OSVSCAN="$(command -v osv-scanner 2>/dev/null || true)"
   if [ -n "$OSVSCAN" ] && [ -x "$OSVSCAN" ]; then
-    run_tool "osv-scanner" "'$OSVSCAN' scan source --recursive '$SRC' 2>&1 || true"
+    run_tool_online "osv-scanner" "'$OSVSCAN' scan source --recursive '$SRC' 2>&1 || true" "osv-scanner interroge osv.dev API"
   else
     skip_tool "osv-scanner" "binaire absent"
   fi
