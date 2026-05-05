@@ -49,6 +49,23 @@ def test_002_repo_wrappers_present() -> None:
     assert not issues, f"wrappers en problème: {issues}"
 
 
+def test_006_fingerprint_lan_private_recognized() -> None:
+    """TESTS.md #6 — `audit-fingerprint 192.168.x.x` reconnaît LAN privée (pas 'IP PUBLIQUE')."""
+    import subprocess
+
+    # On utilise une IP LAN factice (192.168.99.99) qui ne répond pas — le scan nmap
+    # va échouer mais on a juste besoin de la décision regex au début du wrapper.
+    # `timeout 3` shell-level coupe avant que nmap ne traîne.
+    cmd = [str(BIN_DIR / "audit-fingerprint"), "192.168.99.99"]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        out = p.stdout + p.stderr
+    except subprocess.TimeoutExpired as e:
+        out = (e.stdout or "") + (e.stderr or "")
+    assert "IP privée" in out or "privée (LAN)" in out, f"LAN non reconnu:\n{out[-400:]}"
+    assert "IP PUBLIQUE" not in out, f"LAN flagué publique (régression):\n{out[-400:]}"
+
+
 def test_005_fingerprint_loopback_recognized() -> None:
     """TESTS.md #5 — `audit-fingerprint 127.0.0.1` reconnaît la loopback (pas 'IP PUBLIQUE')."""
     p = run_wrapper("audit-fingerprint", "127.0.0.1", timeout=30)
