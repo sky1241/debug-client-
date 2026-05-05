@@ -57,7 +57,7 @@ else
 fi
 
 DOMAIN=$(echo "$URL" | sed -E 's|^https?://||;s|/.*||;s|:.*||')
-DATE_TAG="$(date +%Y-%m-%d-%H%M%S)"
+DATE_TAG="$(date +%Y-%m-%d-%H%M%S)-$$"
 LOG_DIR="$HOME/audit-logs/web/${DOMAIN}/${DATE_TAG}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/run.log"

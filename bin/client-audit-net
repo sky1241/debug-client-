@@ -46,7 +46,7 @@ if [ "$IS_LAN" -eq 0 ] || [ "$PDF" != "LAN-AUTO" ]; then
   [ "$c" = "OUI JE CONFIRME" ] || { echo "ANNULÉ"; exit 1; }
 fi
 
-DATE_TAG="$(date +%Y-%m-%d-%H%M%S)"
+DATE_TAG="$(date +%Y-%m-%d-%H%M%S)-$$"
 SAFE_TARGET="$(echo "$TARGET" | tr '/' '_')"
 LOG_DIR="$HOME/audit-logs/net/${SAFE_TARGET}/${DATE_TAG}"
 mkdir -p "$LOG_DIR"

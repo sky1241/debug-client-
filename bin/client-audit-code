@@ -54,7 +54,7 @@ esac
 # Résolution chemin absolu
 TARGET="$(cd "$TARGET" && pwd)"
 CLIENT_NAME="$(basename "$TARGET")"
-DATE_TAG="$(date +%Y-%m-%d-%H%M%S)"
+DATE_TAG="$(date +%Y-%m-%d-%H%M%S)-$$"
 WORKDIR="/tmp/audit-${CLIENT_NAME}-${DATE_TAG}"
 REPORT_PATH="${TARGET}/audit-claude-${DATE_TAG}.md"
 JSON_REPORT_PATH="${TARGET}/audit-claude-${DATE_TAG}.json"
@@ -177,6 +177,7 @@ rsync -a --safe-links --max-size="$AUDIT_MAX_FILE_SIZE" \
       --exclude='.git/objects' --exclude='node_modules' --exclude='__pycache__' \
       --exclude='*.pyc' --exclude='dist' --exclude='build' --exclude='.venv' \
       --exclude='venv' --exclude='target' \
+      --exclude='audit-claude-*.md' --exclude='audit-claude-*.json' \
       "$TARGET/" "$WORKDIR/src/" 2>&1 | tail -3
 SRC="$WORKDIR/src"
 
@@ -653,9 +654,9 @@ if [ -n "$HAS_REQUIREMENTS$HAS_PYPROJECT" ]; then
   [ -x "$PIPAUDIT" ] || PIPAUDIT="$(command -v pip-audit 2>/dev/null || true)"
   if [ -n "$PIPAUDIT" ] && [ -x "$PIPAUDIT" ]; then
     if [ -n "$HAS_REQUIREMENTS" ]; then
-      run_tool "pip-audit" "find '$SRC' -name requirements.txt -not -path '*/.venv/*' -not -path '*/venv/*' -type f -print0 | xargs -0 -r -n1 '$PIPAUDIT' --disable-pip --no-deps -r 2>&1 || true"
+      run_tool_online "pip-audit" "find '$SRC' -name requirements.txt -not -path '*/.venv/*' -not -path '*/venv/*' -type f -print0 | xargs -0 -r -n1 '$PIPAUDIT' --disable-pip --no-deps -r 2>&1 || true" "pip-audit interroge PyPI Advisory DB"
     else
-      run_tool "pip-audit" "cd '$SRC' && '$PIPAUDIT' --disable-pip --no-deps 2>&1 || true"
+      run_tool_online "pip-audit" "cd '$SRC' && '$PIPAUDIT' --disable-pip --no-deps 2>&1 || true" "pip-audit interroge PyPI Advisory DB"
     fi
   else
     skip_tool "pip-audit" "binaire absent"

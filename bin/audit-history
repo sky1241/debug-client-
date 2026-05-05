@@ -52,5 +52,5 @@ for l in lines:
     target = e.get("target", "?")
     print(f"{ts:<25} {cmd:<22} {client:<25} {sb:<3} {of:<3} {target}")
 print("-" * 110)
-print(f"Total: {len(lines)} audit(s) (depuis $HISTORY)")
+print(f"Total: {len(lines)} audit(s) (depuis {path})")
 PYEOF
