@@ -89,7 +89,7 @@ declare -a TOOL_RESULTS
 run_tool() {
   local name="$1"; local cmd="$2"; local outfile="$LOG_DIR/${name}.out"
   echo "  → $name"
-  if timeout "${AUDIT_TOOL_TIMEOUT}" bash -c "$cmd" > "$outfile" 2>&1; then
+  if timeout "${AUDIT_TOOL_TIMEOUT}" bash -c "set -o pipefail; $cmd" > "$outfile" 2>&1; then
     local n="$(wc -l < "$outfile")"
     TOOL_RESULTS+=("$name|LANCÉ|-|$n lignes|$outfile")
   else

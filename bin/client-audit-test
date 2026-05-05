@@ -21,8 +21,7 @@ EOF
   esac
 done
 
-ROSETTA="/tmp/rosetta-stone-test-$$"
-mkdir -p "$ROSETTA"
+ROSETTA="$(mktemp -d -t rosetta-stone-test-XXXXXX)"
 trap '[ "$KEEP" -eq 0 ] && rm -rf "$ROSETTA"' EXIT
 
 echo "═══════════════════════════════════════════════════════════"

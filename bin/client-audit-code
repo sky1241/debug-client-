@@ -154,7 +154,7 @@ _run_one_inline() {
   local name="$1" cmd="$2"
   local outfile="$LOG_DIR/${name}.out"
   local manifest="$MANIFEST_DIR/${name}.line"
-  if timeout "${AUDIT_TOOL_TIMEOUT}" bash -c "$cmd" > "$outfile" 2>&1; then
+  if timeout "${AUDIT_TOOL_TIMEOUT}" bash -c "set -o pipefail; $cmd" > "$outfile" 2>&1; then
     local n; n="$(wc -l < "$outfile")"
     printf "%s|LANCÉ|-|%s lignes output|%s\n" "$name" "$n" "$outfile" > "$manifest"
   else
@@ -414,7 +414,7 @@ fi
 # flawfinder — C/C++ security (CWE-mapped)
 if [ -n "$HAS_C_CPP" ]; then
   if command -v flawfinder >/dev/null; then
-    run_tool "flawfinder" "flawfinder --quiet --minlevel=2 --columns '$SRC'"
+    run_tool "flawfinder" "flawfinder --quiet --minlevel=2 --columns -- '$SRC'"
   else
     skip_tool "flawfinder" "binaire absent"
   fi
@@ -447,7 +447,7 @@ fi
 # yamllint — YAML syntax + style
 if [ -n "$HAS_YAML_ANY" ]; then
   if command -v yamllint >/dev/null; then
-    run_tool "yamllint" "yamllint -f parsable '$SRC' 2>&1 || true"
+    run_tool "yamllint" "yamllint -f parsable -- '$SRC' 2>&1 || true"
   else
     skip_tool "yamllint" "binaire absent"
   fi
@@ -543,7 +543,7 @@ fi
 # dockle — Dockerfile lint CIS Benchmark
 if [ -n "$HAS_DOCKERFILE" ]; then
   if command -v dockle >/dev/null; then
-    run_tool "dockle" "find '$SRC' -name 'Dockerfile*' -type f -print0 | xargs -0 -r -n1 dockle --no-color -f list --exit-level fatal 2>&1 || true"
+    run_tool "dockle" "find '$SRC' -name 'Dockerfile*' -type f -print0 | xargs -0 -r -I{} dockle --no-color -f list --exit-level fatal --input {} 2>&1 || true"
   else
     skip_tool "dockle" "binaire absent"
   fi
@@ -552,10 +552,20 @@ else
 fi
 
 # ─── 5. Wait outils parallèles + reconstruction TOOL_RESULTS ───────────
+# On wait chaque PID individuellement et on collecte les exit codes.
+# Si un worker plante (signal, OOM, …), le manifest sera absent → marqué ERREUR.
 if [ "${#TOOL_PIDS[@]}" -gt 0 ]; then
   echo ""
   echo "  (attente ${#TOOL_PIDS[@]} outils en parallèle...)"
-  wait "${TOOL_PIDS[@]}" 2>/dev/null || true
+  _failed_workers=0
+  for _pid in "${TOOL_PIDS[@]}"; do
+    if ! wait "$_pid" 2>/dev/null; then
+      _failed_workers=$((_failed_workers + 1))
+    fi
+  done
+  if [ "$_failed_workers" -gt 0 ]; then
+    echo "  ⚠ $_failed_workers worker(s) ont retourné un exit non-zéro (les outils LANCÉ exit=N restent loggés ; ERREUR si manifest absent)"
+  fi
 fi
 
 # Recomposer TOOL_RESULTS dans l'ordre déterministe (TOOL_ORDER)
