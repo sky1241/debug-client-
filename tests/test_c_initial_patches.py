@@ -8,6 +8,17 @@ from pathlib import Path
 from conftest import BIN_DIR, run_wrapper
 
 
+def test_029_has_bin_excludes_git_and_images() -> None:
+    """TESTS.md #29 — HAS_BIN exclut .git/* + extensions images (sshfs marque tout exécutable)."""
+    code = (BIN_DIR / "client-audit-code").read_text()
+    # On cherche le bloc HAS_BIN=$(find ... avec ses exclusions
+    has_bin = re.search(r"HAS_BIN=\$\(find.*?\| head -1\)", code, re.DOTALL)
+    assert has_bin, "définition HAS_BIN introuvable"
+    block = has_bin.group(0)
+    for excl in ("*/.git/*", "*.jpg", "*.png", "*.gif"):
+        assert excl in block, f"exclusion {excl!r} absente de HAS_BIN (régression chunk 29)"
+
+
 def test_028_eslint_flat_config_with_ts_parser() -> None:
     """TESTS.md #28 — Le wrapper utilise eslint flat config + parser TS via require absolu."""
     code = (BIN_DIR / "client-audit-code").read_text()
