@@ -117,3 +117,10 @@ def test_033_gosec_detects_md5(tmp_path: Path) -> None:
     log_dir = audit_rosetta(tmp_path)
     out = (log_dir / "gosec.out").read_text(errors="ignore")
     assert "G401" in out, f"G401 non détecté:\n{out[:400]}"
+
+
+def test_034_eslint_detects_eval_in_js(tmp_path: Path) -> None:
+    """TESTS.md #34 — eslint trouve no-eval / no-new-func dans bad.js."""
+    log_dir = audit_rosetta(tmp_path)
+    out = (log_dir / "eslint.out").read_text(errors="ignore")
+    assert "no-eval" in out or "no-new-func" in out, f"eslint n'a rien trouvé:\n{out[:400]}"
