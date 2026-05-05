@@ -49,6 +49,30 @@ def test_002_repo_wrappers_present() -> None:
     assert not issues, f"wrappers en problème: {issues}"
 
 
+def test_004_bandit_detects_python_dangers(repo_with) -> None:
+    """TESTS.md #4 — `bandit` détecte eval / pickle.loads / shell=True dans un .py piégé."""
+    import subprocess
+
+    code = (
+        "import os, subprocess, pickle\n"
+        "def bad(u):\n"
+        "    os.system('rm ' + u)\n"
+        "    eval(u)\n"
+        "    pickle.loads(u)\n"
+        "    subprocess.call(u, shell=True)\n"
+    )
+    repo = repo_with({"bad.py": code})
+    p = subprocess.run(
+        ["bandit", "-r", str(repo), "-q", "-f", "txt"],
+        capture_output=True, text=True, timeout=30,
+    )
+    out = p.stdout + p.stderr
+    # On exige au minimum que les codes B307 (eval), B403 (pickle) et B602 (shell=True) soient détectés
+    expected_codes = ("B307", "B403", "B602")
+    missing = [c for c in expected_codes if c not in out]
+    assert not missing, f"bandit n'a pas détecté: {missing}\noutput tail: {out[-400:]}"
+
+
 def test_003_nmap_localhost_top1000() -> None:
     """TESTS.md #3 — `nmap` sait scanner localhost et trouve au moins 1 port ouvert.
 
