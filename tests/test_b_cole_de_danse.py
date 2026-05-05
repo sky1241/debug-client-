@@ -31,6 +31,18 @@ def test_011_repo_findable_via_github_api() -> None:
     assert data.get("private") is False, "repo doit être public"
 
 
+def test_014_cole_de_danse_cname_haoyanwuying(tmp_path: Path) -> None:
+    """TESTS.md #14 — Le CNAME du repo cloné = `haoyanwuying.com`."""
+    target = tmp_path / "clone"
+    p = subprocess.run(
+        ["git", "clone", "--depth=1", COLE_REPO_URL, str(target)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert p.returncode == 0, f"clone failed: {p.stderr[-200:]}"
+    cname = (target / "CNAME").read_text().strip()
+    assert cname == "haoyanwuying.com", f"CNAME inattendu: {cname!r}"
+
+
 def test_013_audit_fingerprint_on_html_repo(tmp_path: Path) -> None:
     """TESTS.md #13 — `audit-fingerprint` sur un dossier HTML détecte 'DOSSIER' + 'HTML'."""
     repo = tmp_path / "site"
