@@ -214,3 +214,14 @@ def test_045_semgrep_finds_at_least_one(rosetta_audit: Path) -> None:
     """TESTS.md #45 — semgrep multi-langage trouve au moins 1 finding."""
     out = (rosetta_audit / "semgrep.out").read_text(errors="ignore")
     assert re.search(r"Findings: [1-9]", out), f"semgrep 0 findings:\n{out[-500:]}"
+
+
+def test_046_trufflehog3_runs_no_crash(rosetta_audit: Path) -> None:
+    """TESTS.md #46 — trufflehog3 tourne sans crash (sortie vide en HIGH = OK)."""
+    f = rosetta_audit / "trufflehog3.out"
+    assert f.is_file(), "trufflehog3.out manquant"
+    # Manifest doit confirmer succès (pas de FAIL ni TIMEOUT).
+    manifest = (rosetta_audit / ".manifests" / "trufflehog3.line")
+    assert manifest.is_file(), "manifest trufflehog3 absent"
+    assert "FAIL" not in manifest.read_text(), \
+        f"trufflehog3 FAIL dans manifest:\n{manifest.read_text()[:300]}"
