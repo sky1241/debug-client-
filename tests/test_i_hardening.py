@@ -186,6 +186,26 @@ def test_090_firejail_nonewprivs() -> None:
         "nonewprivs absent du profil — anti-escalation manquant"
 
 
+def test_091_audit_offline_flag() -> None:
+    """TESTS.md #91 — AUDIT_OFFLINE=1 flag dans le wrapper."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert "AUDIT_OFFLINE" in src, "AUDIT_OFFLINE flag absent"
+
+def test_092_run_tool_online_helper() -> None:
+    """TESTS.md #92 — helper `run_tool_online` skip outils online en mode offline."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"run_tool_online", src), "helper run_tool_online absent"
+
+def test_093_offline_implies_sandbox() -> None:
+    """TESTS.md #93 — mode offline implique sandbox (force --net=none)."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    # Heuristique : AUDIT_OFFLINE=1 doit déclencher AUDIT_SANDBOX=1 ou --net=none
+    assert re.search(
+        r"AUDIT_OFFLINE.*AUDIT_SANDBOX|AUDIT_OFFLINE.*--net=none|AUDIT_OFFLINE.*=.*1.*\n.*AUDIT_SANDBOX",
+        src, re.DOTALL,
+    ), "AUDIT_OFFLINE n'active pas la sandbox (cf #93)"
+
+
 @pytest.fixture(scope="session")
 def rosetta_full_run
 
