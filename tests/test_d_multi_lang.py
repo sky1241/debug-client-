@@ -179,6 +179,9 @@ def test_039_bundler_audit_detects_rails_cve(rosetta_audit: Path) -> None:
 def test_040_cargo_audit_detects_rustsec(rosetta_audit: Path) -> None:
     """TESTS.md #40 — cargo-audit détecte RUSTSEC sur Cargo.lock time 0.1.43."""
     out = (rosetta_audit / "cargo-audit.out").read_text(errors="ignore")
+    # cargo-audit fetch advisory-db en ligne — skip si réseau down/rate-limit
+    if re.search(r"couldn't fetch advisory database|fetch.*failed|git operation failed", out, re.IGNORECASE):
+        pytest.skip("cargo-audit n'a pas pu fetcher advisory-db (réseau / rate-limit GitHub)")
     assert re.search(r"RUSTSEC-\d{4}-\d{4}", out), f"cargo-audit pas de RUSTSEC:\n{out[:500]}"
 
 
