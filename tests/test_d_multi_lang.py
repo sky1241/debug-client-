@@ -194,3 +194,9 @@ def test_042_flawfinder_detects_buffer_overflow(rosetta_audit: Path) -> None:
     out = (rosetta_audit / "flawfinder.out").read_text(errors="ignore")
     assert "CWE-120" in out, f"flawfinder pas de CWE-120:\n{out[:500]}"
     assert "gets" in out or "strcpy" in out, f"flawfinder pas de gets/strcpy:\n{out[:500]}"
+
+
+def test_043_shellcheck_detects_unquoted_var(rosetta_audit: Path) -> None:
+    """TESTS.md #43 — shellcheck détecte SC2086 sur `$1` non quoté dans bad.sh."""
+    out = (rosetta_audit / "shellcheck.out").read_text(errors="ignore")
+    assert "SC2086" in out, f"shellcheck pas de SC2086:\n{out[:400]}"
