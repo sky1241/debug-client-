@@ -180,3 +180,10 @@ def test_040_cargo_audit_detects_rustsec(rosetta_audit: Path) -> None:
     """TESTS.md #40 — cargo-audit détecte RUSTSEC sur Cargo.lock time 0.1.43."""
     out = (rosetta_audit / "cargo-audit.out").read_text(errors="ignore")
     assert re.search(r"RUSTSEC-\d{4}-\d{4}", out), f"cargo-audit pas de RUSTSEC:\n{out[:500]}"
+
+
+def test_041_cppcheck_detects_gets(rosetta_audit: Path) -> None:
+    """TESTS.md #41 — cppcheck détecte gets() obsolete sur bad.c."""
+    out = (rosetta_audit / "cppcheck.out").read_text(errors="ignore")
+    assert ("getsCalled" in out) or ("obsolete" in out.lower() and "gets" in out), \
+        f"cppcheck pas de finding gets():\n{out[:500]}"
