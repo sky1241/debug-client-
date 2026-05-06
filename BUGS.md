@@ -21,6 +21,14 @@
 - **Test**: tests/test_f_diff.py::test_054_diff_detects_fixed_vs_new + test_055 + test_057 (tous passent maintenant).
 - **Regression**: aucune (fix isolé au helper de test).
 
+## BUG-004: test_040 cargo-audit RUSTSEC flaky (advisory-db git fetch)
+- **Status**: FIXED
+- **Symptom**: `tests/test_d_multi_lang.py::test_040` fail intermittent : `couldn't fetch advisory database: git operation failed`. La sortie contient l'erreur réseau au lieu du RUSTSEC attendu.
+- **Root cause**: cargo-audit clone/pull `https://github.com/RustSec/advisory-db.git` à chaque run. Sous charge ou rate-limit GitHub, le fetch échoue → output ne contient pas RUSTSEC-X-Y → assertion FAIL.
+- **Fix**: skip propre si l'erreur réseau est détectée dans cargo-audit.out (`pytest.skip(reason=...)`). Si réseau OK, l'assertion s'applique normalement.
+- **Test**: tests/test_d_multi_lang.py::test_040_cargo_audit_detects_rustsec.
+- **Regression**: aucune.
+
 ## BUG-003: test_020/021/022 curl haoyanwuying.com flaky (réseau prod)
 - **Status**: FIXED
 - **Symptom**: 1 fail aléatoire sur 3 (curl exit 28 = timeout) lors d'un forge complet — `tests/test_b_cole_de_danse.py::test_022` notamment.
