@@ -21,6 +21,16 @@
 - **Test**: tests/test_f_diff.py::test_054_diff_detects_fixed_vs_new + test_055 + test_057 (tous passent maintenant).
 - **Regression**: aucune (fix isolé au helper de test).
 
+## BUG-007: test_011 GitHub API rate-limit (403) après usage répété
+- **Status**: FIXED
+- **Symptom**: après ~50 runs forge consécutifs, test_011 fail avec `HTTP Error 403: rate limit exceeded`. Le retry 3x avec backoff 2/4/6s (BUG-002) ne suffit pas — rate-limit dure 1h.
+- **Root cause**: GitHub API limite à 60 req/h pour les requêtes anonymes. Aucun token utilisé.
+- **Fix**:
+  1. `pytest.skip()` propre si HTTP 403 + "rate limit" dans la raison → état env, pas bug code.
+  2. Lit `GITHUB_TOKEN` depuis l'environnement et l'ajoute en header `Authorization: Bearer` → augmente la limite à 5000/h si disponible.
+- **Test**: tests/test_b_cole_de_danse.py::test_011_repo_findable_via_github_api.
+- **Regression**: aucune.
+
 ## BUG-005: test_083 firejail_blocks_ssh_dir non branché (regex laxe)
 - **Status**: FIXED
 - **Symptom**: sabotage par commentage de `blacklist ${HOME}/.ssh` dans le profil firejail → test PASS au lieu de FAIL → branchage fictif.

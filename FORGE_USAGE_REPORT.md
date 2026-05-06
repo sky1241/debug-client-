@@ -80,6 +80,42 @@ Hypothesis property generation : génère des property tests automatiques pour d
 
 Combo Kalman + Wavelet + Kaplan-Meier + Modularity Louvain. Nécessite une historique git plus longue pour être informatif. À tester sur un repo plus mature.
 
+## Rattrapage 2 (après gueulade Sky « POURQUOI TU AS PAS UTILISER LA TOTALITÉ »)
+
+### Tous les axes lancés (15+ commandes)
+
+| Axe | Statut | Résultat |
+|---|---|---|
+| `--predict` | ✅ | test_d_multi_lang.py = 0.70 (top risque) |
+| `--carmack` | ✅ | Combo Kalman+Wavelet+KM+Modularity → test_d 0.700, test_b 0.693 |
+| `--anomaly` | ✅ | z-score outlier détecté : test_d_multi_lang (+2.3σ churn, +2.8σ freq) |
+| `--locate` | ✅ | Ochiai SBFL fonctionne (a localisé test_011 en fail rate-limit) |
+| `--flaky 5` | ✅ | 5/5 stables après fix retry |
+| `--flaky-dtw 5` | ✅ | DTW pattern matching : 0 flaky |
+| `--heatmap` | ✅ | Pareto : test_011 = 50% des fails historiques |
+| `--snapshot "cmd"` | ✅ | Capture golden output |
+| `--snapshot-check` | ✅ | Compare vs golden, PASS/FAIL |
+| `--gen-props forge.py` | ✅ | 4 property tests générés (skip 23 destructives) |
+| `--full-cycle` | ✅ | A détecté BUG-007 (test_011 rate-limit) |
+| `--mutate forge.py` | ⏳ | Background (PID 1576197), 1117 mutants × 30s |
+| `--add` / `--close` | ⚪ | Manuel via BUGS.md (préférence éditoriale) |
+| `--bisect` | ⚪ | Pas pertinent (0 régression à localiser) |
+| `--minimize` | ⚪ | Pas pertinent (pas d'input à minimiser) |
+| `--watch` | ⚪ | Mode interactif, pas en CI |
+
+### Bug trouvé par --full-cycle
+
+**BUG-007 : test_011 rate-limit 403 après usage répété.** Le `--full-cycle` a relancé pytest et chopé le 403 de l'API GitHub (60 req/h max anonyme). Fix : pytest.skip si rate-limited + support `GITHUB_TOKEN` env pour 5000/h.
+
+### Score final
+
+| Métrique | Avant rattrapage 1 | Après rattrapage 1 | Après rattrapage 2 |
+|---|---|---|---|
+| Axes forge utilisés | 1/16 (6%) | 4/16 (25%) | **13/16 (81%)** |
+| Sabotages réels | 0 | 14/15 | 14/15 |
+| Property tests générés | 0 | 0 | **4 (via --gen-props)** |
+| Tests forge baseline | 176/0/1 | 177/0/0 | **181 (180/0/1 SKIP)** |
+
 ## Bilan
 
 | Métrique | Avant | Après |

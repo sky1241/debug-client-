@@ -38,9 +38,14 @@ def cole_clone(tmp_path_factory) -> Path:
 
 def test_011_repo_findable_via_github_api() -> None:
     """TESTS.md #11 — Le repo `sky1241/-cole-de-danse` est trouvable via API GitHub."""
+    import os as _os
+    headers = {"User-Agent": "claude-tooling-test", "Accept": "application/vnd.github+json"}
+    # Si GITHUB_TOKEN dispo en env → augmente rate limit de 60/h à 5000/h
+    if token := _os.environ.get("GITHUB_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(
         "https://api.github.com/repos/sky1241/-cole-de-danse",
-        headers={"User-Agent": "claude-tooling-test", "Accept": "application/vnd.github+json"},
+        headers=headers,
     )
     last_err: Exception | None = None
     for attempt in range(3):
@@ -50,7 +55,13 @@ def test_011_repo_findable_via_github_api() -> None:
             assert data.get("name") == "-cole-de-danse"
             assert data.get("private") is False, "repo doit être public"
             return
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, socket.timeout) as e:
+        except urllib.error.HTTPError as e:
+            # 403 rate limit = état env, pas bug code → skip propre
+            if e.code == 403 and "rate limit" in (e.reason or "").lower():
+                pytest.skip(f"GitHub API rate-limited ({e.reason}) — set GITHUB_TOKEN env pour 5000/h")
+            last_err = e
+            time.sleep(2 * (attempt + 1))
+        except (urllib.error.URLError, TimeoutError, socket.timeout) as e:
             last_err = e
             time.sleep(2 * (attempt + 1))
     raise AssertionError(f"GitHub API injoignable après 3 tentatives: {last_err}")
