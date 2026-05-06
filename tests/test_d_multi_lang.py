@@ -174,3 +174,9 @@ def test_039_bundler_audit_detects_rails_cve(rosetta_audit: Path) -> None:
     out = (rosetta_audit / "bundler-audit.out").read_text(errors="ignore")
     assert "Name: rails" in out and "CVE" in out, f"bundler-audit pas de CVE Rails:\n{out[:600]}"
     assert "Vulnerabilities found" in out, f"bannière 'Vulnerabilities found' absente:\n{out[-400:]}"
+
+
+def test_040_cargo_audit_detects_rustsec(rosetta_audit: Path) -> None:
+    """TESTS.md #40 — cargo-audit détecte RUSTSEC sur Cargo.lock time 0.1.43."""
+    out = (rosetta_audit / "cargo-audit.out").read_text(errors="ignore")
+    assert re.search(r"RUSTSEC-\d{4}-\d{4}", out), f"cargo-audit pas de RUSTSEC:\n{out[:500]}"
