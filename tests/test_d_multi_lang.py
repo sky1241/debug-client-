@@ -225,3 +225,10 @@ def test_046_trufflehog3_runs_no_crash(rosetta_audit: Path) -> None:
     assert manifest.is_file(), "manifest trufflehog3 absent"
     assert "FAIL" not in manifest.read_text(), \
         f"trufflehog3 FAIL dans manifest:\n{manifest.read_text()[:300]}"
+
+
+def test_047_clamav_detects_eicar(rosetta_audit: Path) -> None:
+    """TESTS.md #47 — clamav (clamscan) détecte EICAR-Test-Signature."""
+    out = (rosetta_audit / "clamav.out").read_text(errors="ignore")
+    assert "Eicar-Test-Signature" in out, f"clamav pas d'EICAR:\n{out[:500]}"
+    assert "FOUND" in out, f"clamav 'FOUND' absent:\n{out[:500]}"
