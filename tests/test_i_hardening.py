@@ -268,6 +268,31 @@ def test_102_caches_used_by_tools() -> None:
     assert has_cache_env, "aucune var cache CVE exportée"
 
 
+def test_103_audit_history_jsonl_format() -> None:
+    """TESTS.md #103 — audit-history écrit en JSONL."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"\.audit-history\.jsonl|audit-history\.jsonl", src) or \
+           ".audit-history" in WRAPPER_AUDIT_HISTORY.read_text(), \
+        "fichier .audit-history.jsonl jamais référencé"
+
+def test_104_audit_history_supports_limit() -> None:
+    """TESTS.md #104 — audit-history --limit=N supporté."""
+    src = WRAPPER_AUDIT_HISTORY.read_text()
+    assert re.search(r"--limit", src), "audit-history --limit absent"
+
+def test_105_audit_history_supports_filter() -> None:
+    """TESTS.md #105 — audit-history --filter=X supporté."""
+    src = WRAPPER_AUDIT_HISTORY.read_text()
+    assert re.search(r"--filter", src), "audit-history --filter absent"
+
+def test_106_audit_history_handles_corrupt_lines() -> None:
+    """TESTS.md #106 — audit-history tolère lignes JSONL corrompues."""
+    src = WRAPPER_AUDIT_HISTORY.read_text()
+    # Doit avoir un try/except ou check JSON parse
+    assert re.search(r"parse.error|try:|JSONDecodeError|continue", src, re.IGNORECASE), \
+        "audit-history ne gère pas les lignes corrompues"
+
+
 @pytest.fixture(scope="session")
 def rosetta_full_run
 
