@@ -9,6 +9,7 @@ from conftest import BIN_DIR, run_wrapper
 
 def _create_log_dir_with_outs(parent: Path, outs: dict[str, str]) -> Path:
     """Crée un faux LOG_DIR avec les fichiers .out donnés (clé=tool, valeur=contenu)."""
+    parent.mkdir(parents=True, exist_ok=True)
     log = parent / "log"
     log.mkdir()
     for tool, content in outs.items():

@@ -38,12 +38,22 @@ def cole_clone(tmp_path_factory) -> Path:
 
 def test_011_repo_findable_via_github_api() -> None:
     """TESTS.md #11 — Le repo `sky1241/-cole-de-danse` est trouvable via API GitHub."""
-    with urllib.request.urlopen(
-        "https://api.github.com/repos/sky1241/-cole-de-danse", timeout=10
-    ) as resp:
-        data = json.loads(resp.read())
-    assert data.get("name") == "-cole-de-danse"
-    assert data.get("private") is False, "repo doit être public"
+    req = urllib.request.Request(
+        "https://api.github.com/repos/sky1241/-cole-de-danse",
+        headers={"User-Agent": "claude-tooling-test", "Accept": "application/vnd.github+json"},
+    )
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read())
+            assert data.get("name") == "-cole-de-danse"
+            assert data.get("private") is False, "repo doit être public"
+            return
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, socket.timeout) as e:
+            last_err = e
+            time.sleep(2 * (attempt + 1))
+    raise AssertionError(f"GitHub API injoignable après 3 tentatives: {last_err}")
 
 
 @pytest.fixture(scope="session")
