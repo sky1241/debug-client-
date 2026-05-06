@@ -167,3 +167,10 @@ def test_038_brakeman_detects_warnings(rosetta_audit: Path) -> None:
     """TESTS.md #38 — brakeman détecte au moins 1 warning sécurité."""
     out = (rosetta_audit / "brakeman.out").read_text(errors="ignore")
     assert re.search(r"Security Warnings: [1-9]", out), f"brakeman 0 warning:\n{out[:400]}"
+
+
+def test_039_bundler_audit_detects_rails_cve(rosetta_audit: Path) -> None:
+    """TESTS.md #39 — bundler-audit détecte CVE sur Gemfile.lock Rails 4.0.0."""
+    out = (rosetta_audit / "bundler-audit.out").read_text(errors="ignore")
+    assert "Name: rails" in out and "CVE" in out, f"bundler-audit pas de CVE Rails:\n{out[:600]}"
+    assert "Vulnerabilities found" in out, f"bannière 'Vulnerabilities found' absente:\n{out[-400:]}"
