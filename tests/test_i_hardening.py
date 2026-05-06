@@ -313,6 +313,25 @@ def test_109_dry_run_skips_execution() -> None:
         "DRY_RUN ne gate pas l'exécution"
 
 
+def test_110_zipbomb_ratio_check() -> None:
+    """TESTS.md #110 — wrapper calcule un ratio compressed/uncompressed."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"zipbomb|ratio|compress.*ratio", src, re.IGNORECASE), \
+        "détection zipbomb absente"
+
+def test_111_zipbomb_threshold_warning() -> None:
+    """TESTS.md #111 — seuil ratio (warning ou reject) configuré."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"AUDIT_ZIPBOMB|RATIO|seuil|threshold", src, re.IGNORECASE), \
+        "seuil zipbomb non configuré"
+
+def test_112_zipbomb_reject_mode() -> None:
+    """TESTS.md #112 — AUDIT_REJECT_ZIPBOMB=1 fait exit 2."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"AUDIT_REJECT_ZIPBOMB|REJECT_ZIPBOMB", src), \
+        "AUDIT_REJECT_ZIPBOMB flag absent"
+
+
 @pytest.fixture(scope="session")
 def rosetta_full_run
 
