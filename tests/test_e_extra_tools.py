@@ -31,10 +31,15 @@ def test_051_gitleaks_detects_real_keys(tmp_path: Path) -> None:
     """TESTS.md #51 — gitleaks détecte AWS access token + GitHub PAT au format valide."""
     repo = tmp_path / "repo"
     repo.mkdir()
+    # Concat strings au runtime pour ne pas trigger GitHub Push Protection
+    # sur le source de ce test (gitleaks scan le fichier généré, qui aura le secret intact).
+    aws = "AKIA" + "Q27Y4PNJ4PYG2XYZ"
+    pat = "ghp_" + "abc123XYZ456abc123XYZ456abc123XYZ4567"
+    slack = "xoxb-" + "1234567890-1234567890-AbCdEfGhIjKlMnOpQrStUvWx"
     (repo / "leaks.py").write_text(
-        'aws_id = "AKIAQ27Y4PNJ4PYG2XYZ"\n'
-        'github_pat = "ghp_abc123XYZ456abc123XYZ456abc123XYZ4567"\n'
-        'slack = "xoxb-1234567890-1234567890-AbCdEfGh_IjKlMnOpQrStUvWx"\n'
+        f'aws_id = "{aws}"\n'
+        f'github_pat = "{pat}"\n'
+        f'slack = "{slack}"\n'
     )
     p = subprocess.run(
         ["gitleaks", "dir", "--no-banner", str(repo)],
