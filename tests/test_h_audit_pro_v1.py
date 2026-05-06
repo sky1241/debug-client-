@@ -53,3 +53,16 @@ def test_068_date_tag_includes_pid() -> None:
     # DATE_TAG="$(date ...)-$$"
     assert re.search(r'DATE_TAG=".*\$\(date[^)]+\)[^"]*-\$\$', src), \
         "DATE_TAG doit inclure $$ (PID) pour anti-collision — fix bug #68"
+
+
+def test_069_strict_patterns_in_audit_test() -> None:
+    """TESTS.md #69 — client-audit-test utilise patterns stricts non-zéro."""
+    src = WRAPPER_AUDIT_TEST.read_text()
+    # Patterns clés : Findings: [1-9], Total: [1-9], plus que zéro requis
+    assert re.search(r"Findings:\s*\[1-9\]", src), \
+        "pattern strict 'Findings: [1-9]' absent — fix bug #69 (rejet 0)"
+    assert re.search(r"Total:\s*\[1-9\]", src), \
+        "pattern strict 'Total: [1-9]' absent — fix bug #69"
+    # Pas de pattern lax type "Findings:" tout court
+    lax_patterns = re.findall(r'CHECKS\+=\("[^@]+@@Findings: ?@@', src)
+    assert not lax_patterns, f"patterns laxes 'Findings:' tout court détectés: {lax_patterns}"
