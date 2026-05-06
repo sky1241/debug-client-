@@ -20,3 +20,14 @@ def test_065_dockle_uses_input_flag() -> None:
     src = WRAPPER_AUDIT_CODE.read_text()
     assert re.search(r"dockle[^\n]*--input", src), \
         "dockle doit utiliser --input (pas path positionnel) — fix bug #65"
+
+
+def test_066_bash_c_uses_pipefail() -> None:
+    """TESTS.md #66 — wrappers bash internes utilisent `set -o pipefail`."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    # Le wrapper génère des scripts avec pipefail explicite (run_tool helper)
+    assert re.search(r"set -o pipefail", src), \
+        "set -o pipefail absent — fix bug #66 (SIGPIPE masqué)"
+    # Le set -euo pipefail global doit aussi être présent (fail fast)
+    assert re.search(r"^set -[a-z]*o pipefail", src, re.MULTILINE) or \
+        "set -euo pipefail" in src, "set -euo pipefail global absent"
