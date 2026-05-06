@@ -332,6 +332,37 @@ def test_112_zipbomb_reject_mode() -> None:
         "AUDIT_REJECT_ZIPBOMB flag absent"
 
 
+def test_113_readme_has_threat_model() -> None:
+    """TESTS.md #113 — README v2 contient threat model."""
+    readme = (REPO_ROOT / "README.md").read_text()
+    assert re.search(r"threat\s*model", readme, re.IGNORECASE), \
+        "README sans 'threat model' — doc v2 incomplete"
+
+def test_114_changelog_present() -> None:
+    """TESTS.md #114 — CHANGELOG.md présent et non-vide."""
+    cl = REPO_ROOT / "CHANGELOG.md"
+    assert cl.is_file(), "CHANGELOG.md manquant"
+    content = cl.read_text()
+    assert len(content) > 200, f"CHANGELOG trop court: {len(content)} chars"
+    assert re.search(r"^##\s+v?\d", content, re.MULTILINE), \
+        "CHANGELOG sans entrée versionnée"
+
+def test_115_v2_tag_exists() -> None:
+    """TESTS.md #115 — tag v2.x existe dans git."""
+    p = subprocess.run(
+        ["git", "tag", "--list", "v2*"],
+        capture_output=True, text=True, cwd=str(REPO_ROOT),
+    )
+    tags = [t.strip() for t in p.stdout.splitlines() if t.strip()]
+    assert any(t.startswith("v2") for t in tags), f"aucun tag v2.x trouvé: {tags}"
+
+def test_116_three_modes_validated_in_doc() -> None:
+    """TESTS.md #116 — README mentionne les 3 modes (default / sandbox / offline)."""
+    readme = (REPO_ROOT / "README.md").read_text()
+    for mode in ("AUDIT_SANDBOX", "AUDIT_OFFLINE"):
+        assert mode in readme, f"mode {mode} non documenté dans README"
+
+
 @pytest.fixture(scope="session")
 def rosetta_full_run
 
