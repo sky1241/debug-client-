@@ -187,3 +187,10 @@ def test_041_cppcheck_detects_gets(rosetta_audit: Path) -> None:
     out = (rosetta_audit / "cppcheck.out").read_text(errors="ignore")
     assert ("getsCalled" in out) or ("obsolete" in out.lower() and "gets" in out), \
         f"cppcheck pas de finding gets():\n{out[:500]}"
+
+
+def test_042_flawfinder_detects_buffer_overflow(rosetta_audit: Path) -> None:
+    """TESTS.md #42 — flawfinder détecte CWE-120 sur strcpy/gets dans bad.c."""
+    out = (rosetta_audit / "flawfinder.out").read_text(errors="ignore")
+    assert "CWE-120" in out, f"flawfinder pas de CWE-120:\n{out[:500]}"
+    assert "gets" in out or "strcpy" in out, f"flawfinder pas de gets/strcpy:\n{out[:500]}"
