@@ -45,3 +45,11 @@ def test_067_wait_iterates_per_pid() -> None:
     # Anti-pattern strict : pas de `wait || true` aveugle
     assert not re.search(r"^\s*wait\s*\|\|\s*true\s*$", src, re.MULTILINE), \
         "anti-pattern `wait || true` détecté (masque les crashs workers)"
+
+
+def test_068_date_tag_includes_pid() -> None:
+    """TESTS.md #68 — DATE_TAG inclut `$$` (PID) pour éviter les collisions LOG_DIR."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    # DATE_TAG="$(date ...)-$$"
+    assert re.search(r'DATE_TAG=".*\$\(date[^)]+\)[^"]*-\$\$', src), \
+        "DATE_TAG doit inclure $$ (PID) pour anti-collision — fix bug #68"
