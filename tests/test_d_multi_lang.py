@@ -208,3 +208,9 @@ def test_044_yamllint_detects_indent_error(rosetta_audit: Path) -> None:
     assert "[error]" in out, f"yamllint pas d'error:\n{out[:400]}"
     assert ("indent" in out.lower()) or ("syntax error" in out.lower()), \
         f"yamllint ni indent ni syntax error:\n{out[:400]}"
+
+
+def test_045_semgrep_finds_at_least_one(rosetta_audit: Path) -> None:
+    """TESTS.md #45 — semgrep multi-langage trouve au moins 1 finding."""
+    out = (rosetta_audit / "semgrep.out").read_text(errors="ignore")
+    assert re.search(r"Findings: [1-9]", out), f"semgrep 0 findings:\n{out[-500:]}"
