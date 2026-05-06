@@ -240,3 +240,10 @@ def test_048_trivy_deps_detects_lockfile_cves(rosetta_audit: Path) -> None:
     # Au moins 1 Total non-zéro avec HIGH/CRITICAL/MEDIUM > 0
     matches = re.findall(r"Total: ([1-9]\d*)", out)
     assert matches, f"trivy-deps pas de Total non-zéro:\n{out[:600]}"
+
+
+def test_049_trivy_config_detects_dockerfile_k8s(rosetta_audit: Path) -> None:
+    """TESTS.md #49 — trivy-config détecte FAILURES sur Dockerfile + K8s."""
+    out = (rosetta_audit / "trivy-config.out").read_text(errors="ignore")
+    matches = re.findall(r"FAILURES: ([1-9]\d*)", out)
+    assert matches, f"trivy-config pas de FAILURES:\n{out[:600]}"
