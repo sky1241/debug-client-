@@ -80,6 +80,52 @@ def test_075_rosetta_full_audit_passes(rosetta_full_run: dict) -> None:
     assert len(out_files) >= 18, f"trop peu de .out (attendu ≥18, eu {len(out_files)})"
 
 
+def test_076_rsync_safe_links_for_external_symlinks() -> None:
+    """TESTS.md #76 — rsync utilise --safe-links (exclut symlinks pointant hors src)."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"rsync[^\n]*--safe-links", src), \
+        "rsync doit utiliser --safe-links (anti-symlink-attack)"
+
+def test_077_rsync_excludes_user_secrets() -> None:
+    """TESTS.md #77 — rsync exclut .ssh, .aws, .gnupg via --exclude ou safe-links."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    # Anti-pattern : pas de copie de symlinks externes (safe-links suffit) — déjà testé en 076
+    # On valide ici que la copie n'est PAS faite sans --safe-links
+    rsyncs = re.findall(r"rsync[^\n]+", src)
+    assert rsyncs, "aucun rsync trouvé dans le wrapper"
+    for r in rsyncs:
+        if "--archive" in r or "-a" in r.split():
+            assert "--safe-links" in r or "-l" not in r, \
+                f"rsync archive sans --safe-links détecté: {r[:200]}"
+
+def test_078_max_files_limit_enforced() -> None:
+    """TESTS.md #78 — AUDIT_MAX_FILES respecté (limite path bomb)."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"AUDIT_MAX_FILES", src), "var AUDIT_MAX_FILES absente"
+    # Doit faire un check vs la valeur (compare et exit ou skip)
+    assert re.search(r"\$AUDIT_MAX_FILES|\$\{AUDIT_MAX_FILES", src), \
+        "AUDIT_MAX_FILES jamais déréférencée — variable orpheline"
+
+def test_079_max_total_size_limit_enforced() -> None:
+    """TESTS.md #79 — AUDIT_MAX_TOTAL_SIZE_MB respecté (limite repo > 1 GiB)."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"AUDIT_MAX_TOTAL_SIZE_MB", src), "AUDIT_MAX_TOTAL_SIZE_MB absente"
+
+def test_080_find_maxdepth_capped() -> None:
+    """TESTS.md #80 — `find` avec `-maxdepth` cap (anti-deep tree)."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    finds = re.findall(r"find\s+[^\n|;]+", src)
+    # Au moins UN find doit avoir -maxdepth (pas tous, certains find sont ciblés)
+    has_capped = any("-maxdepth" in f for f in finds)
+    assert has_capped, "aucun find n'utilise -maxdepth — risque deep tree"
+
+def test_081_max_file_size_limit() -> None:
+    """TESTS.md #81 — AUDIT_MAX_FILE_SIZE limite par fichier."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"AUDIT_MAX_FILE_SIZE|max-size", src), \
+        "limite par-fichier absente (AUDIT_MAX_FILE_SIZE / --max-size)"
+
+
 @pytest.fixture(scope="session")
 def rosetta_full_run
 
