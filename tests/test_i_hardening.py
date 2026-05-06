@@ -206,6 +206,27 @@ def test_093_offline_implies_sandbox() -> None:
     ), "AUDIT_OFFLINE n'active pas la sandbox (cf #93)"
 
 
+def test_094_format_all_supported() -> None:
+    """TESTS.md #94 — `--format=all` génère .md + .json."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    # FORMAT="all" doit être listé comme valeur valide (pas seulement md/json)
+    assert re.search(r"md\|json\|all|all\|json\|md|md, json, all", src), \
+        "format 'all' non supporté dans le wrapper"
+
+def test_095_json_schema_versioned() -> None:
+    """TESTS.md #95 — schéma JSON nommé/versionné (claude-audit-code/v1 ou similaire)."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"claude-audit-code/v\d", src) or \
+           re.search(r'"schema"', src), \
+        "schéma JSON non versionné"
+
+def test_096_json_only_format_supported() -> None:
+    """TESTS.md #96 — `--format=json` seul supporté (pas de .md généré)."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r'--format[= ]json|FORMAT[= ]json', src), \
+        "--format=json absent du wrapper"
+
+
 @pytest.fixture(scope="session")
 def rosetta_full_run
 
