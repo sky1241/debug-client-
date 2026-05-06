@@ -21,6 +21,20 @@
 - **Test**: tests/test_f_diff.py::test_054_diff_detects_fixed_vs_new + test_055 + test_057 (tous passent maintenant).
 - **Regression**: aucune (fix isolé au helper de test).
 
+## BUG-008: forge.py add_bug crée BUG+XXX et close_bug ne le retrouve pas
+- **Status**: FIXED
+- **Symptom**: `forge.py --add "..."` crée des entrées `## BUG+008` (avec `+` au lieu de `-`). `forge.py --close BUG-008` ne le trouve pas (et même `--close BUG+008` échoue car `+` est un metachar regex non échappé).
+- **Root cause**:
+  1. forge.py:674 — `bug_id = f"BUG+{next_num:03d}"` typo `+` au lieu de `-`.
+  2. forge.py:699 — `pattern = f"(## {bug_id}:..."` n'échappe pas les metachars du bug_id, donc `+` devient quantifieur regex et le match foire.
+- **Fix**:
+  1. Remplacer `BUG+` par `BUG-` dans add_bug (forge.py:674).
+  2. Wrapper `bug_id` dans `re.escape()` dans close_bug (forge.py:699) pour robustesse.
+  3. Ajouté `flags=re.DOTALL` au re.sub() pour cohérence avec la sémantique `.*?` du pattern.
+- **Test**: `forge.py --add "X"` puis `--close BUG-NNN` → "marked FIXED" confirmé.
+- **Regression**: aucune (fix isolé à 2 lignes de forge.py).
+- **Note**: bug **trouvé en testant tous les axes forge** après gueulade Sky « POURQUOI TU AS PAS UTILISER LA TOTALITÉ ». Validation que tester chaque axe a une vraie valeur (BUG-007 et BUG-008 trouvés tous deux pendant ce rattrapage).
+
 ## BUG-007: test_011 GitHub API rate-limit (403) après usage répété
 - **Status**: FIXED
 - **Symptom**: après ~50 runs forge consécutifs, test_011 fail avec `HTTP Error 403: rate limit exceeded`. Le retry 3x avec backoff 2/4/6s (BUG-002) ne suffit pas — rate-limit dure 1h.
@@ -76,3 +90,21 @@
 - **Test**: 5/5 passes consécutifs après fix (avant : 1 fail / 2 pass).
 - **Regression**: aucune (fix isolé au test).
 
+
+## BUG+008: BUG-008 demo après fix
+- **Status**: OPEN
+- **Date**: 2026-05-06 10:36
+- **Symptom**: [a remplir]
+- **Root cause**: [a remplir]
+- **Fix**: [pending]
+- **Test**: [a ecrire]
+- **Regression**: [a verifier]
+
+## BUG-009: demo après fix BUG-008+009
+- **Status**: FIXED (2026-05-06)
+- **Date**: 2026-05-06 10:37
+- **Symptom**: [a remplir]
+- **Root cause**: [a remplir]
+- **Fix**: [pending]
+- **Test**: [a ecrire]
+- **Regression**: [a verifier]

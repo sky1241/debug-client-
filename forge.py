@@ -671,7 +671,7 @@ def add_bug(root, description):
     # Find next bug number
     existing = re.findall(r"BUG-(\d+)", content)
     next_num = max([int(n) for n in existing], default=0) + 1
-    bug_id = f"BUG+{next_num:03d}"
+    bug_id = f"BUG-{next_num:03d}"
 
     entry = f"""
 ## {bug_id}: {description}
@@ -696,8 +696,9 @@ def close_bug(root, bug_id):
         return
 
     content = bugs_path.read_text(encoding="utf-8")
-    pattern = f"(## {bug_id}:.*?\\n- \\*\\*Status\\*\\*: )OPEN"
-    new_content = re.sub(pattern, f"\\1FIXED ({datetime.now().strftime('%Y-%m-%d')})", content)
+    # re.escape() pour gérer un bug_id avec metachars (ex: + ou *) — évite ReDoS et match foiré
+    pattern = f"(## {re.escape(bug_id)}:.*?\\n- \\*\\*Status\\*\\*: )OPEN"
+    new_content = re.sub(pattern, f"\\1FIXED ({datetime.now().strftime('%Y-%m-%d')})", content, flags=re.DOTALL)
 
     if new_content == content:
         print(f"  {bug_id} not found or already closed")
