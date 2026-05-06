@@ -200,3 +200,11 @@ def test_043_shellcheck_detects_unquoted_var(rosetta_audit: Path) -> None:
     """TESTS.md #43 — shellcheck détecte SC2086 sur `$1` non quoté dans bad.sh."""
     out = (rosetta_audit / "shellcheck.out").read_text(errors="ignore")
     assert "SC2086" in out, f"shellcheck pas de SC2086:\n{out[:400]}"
+
+
+def test_044_yamllint_detects_indent_error(rosetta_audit: Path) -> None:
+    """TESTS.md #44 — yamllint détecte indent ou syntax error sur bad.yml."""
+    out = (rosetta_audit / "yamllint.out").read_text(errors="ignore")
+    assert "[error]" in out, f"yamllint pas d'error:\n{out[:400]}"
+    assert ("indent" in out.lower()) or ("syntax error" in out.lower()), \
+        f"yamllint ni indent ni syntax error:\n{out[:400]}"
