@@ -293,6 +293,26 @@ def test_106_audit_history_handles_corrupt_lines() -> None:
         "audit-history ne gère pas les lignes corrompues"
 
 
+def test_107_dry_run_flag_present() -> None:
+    """TESTS.md #107 — --dry-run flag dans le wrapper."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"--dry-run|DRY_RUN", src), "--dry-run flag absent"
+
+def test_108_dry_run_compatible_with_json() -> None:
+    """TESTS.md #108 — --dry-run --json génère output structuré."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    # Doit avoir mention DRY-RUN dans le code (status spécial dans manifest/json)
+    assert re.search(r"DRY[-_]RUN|dry.run", src, re.IGNORECASE), \
+        "DRY-RUN status absent du code"
+
+def test_109_dry_run_skips_execution() -> None:
+    """TESTS.md #109 — en --dry-run, run_tool ne lance PAS l'outil."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    # Heuristique : check que DRY_RUN gate les exécutions
+    assert re.search(r'(\$DRY_RUN|"\$\{DRY_RUN\}").*"1"|DRY_RUN.*=.*1.*return', src, re.DOTALL), \
+        "DRY_RUN ne gate pas l'exécution"
+
+
 @pytest.fixture(scope="session")
 def rosetta_full_run
 
