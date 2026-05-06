@@ -109,13 +109,21 @@ def test_019_gobuster_finds_index(http_server: int, tmp_path: Path) -> None:
     assert "index.html" in p.stdout, f"gobuster n'a pas trouvé index.html:\n{p.stdout[-300:]}"
 
 
+def _curl_retry(args: list[str], attempts: int = 3, sleep_s: int = 2) -> subprocess.CompletedProcess:
+    """Lance curl avec retry sur erreurs réseau transitoires (timeout, exit 28, etc.)."""
+    last: subprocess.CompletedProcess | None = None
+    for i in range(attempts):
+        last = subprocess.run(args, capture_output=True, text=True, timeout=20)
+        if last.returncode == 0:
+            return last
+        time.sleep(sleep_s * (i + 1))
+    return last  # type: ignore[return-value]
+
+
 def test_020_prod_headers_github_pages() -> None:
     """TESTS.md #20 — `curl -I haoyanwuying.com` retourne 200 + signature GitHub Pages/Fastly."""
-    p = subprocess.run(
-        ["curl", "-sI", "-L", "--max-time", "10", "https://haoyanwuying.com/"],
-        capture_output=True, text=True, timeout=15,
-    )
-    assert p.returncode == 0, f"curl exit {p.returncode}: {p.stderr[-200:]}"
+    p = _curl_retry(["curl", "-sI", "-L", "--max-time", "10", "https://haoyanwuying.com/"])
+    assert p.returncode == 0, f"curl exit {p.returncode} après 3 retries: {p.stderr[-200:]}"
     out = p.stdout
     assert "200" in out, f"pas de 200 OK:\n{out[:300]}"
     assert any(s in out.lower() for s in ("github.com", "fastly", "varnish")), \
@@ -124,23 +132,21 @@ def test_020_prod_headers_github_pages() -> None:
 
 def test_021_prod_blocks_git_head() -> None:
     """TESTS.md #21 — `haoyanwuying.com/.git/HEAD` retourne 404 (prod safe)."""
-    p = subprocess.run(
-        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-         "-L", "--max-time", "10", "https://haoyanwuying.com/.git/HEAD"],
-        capture_output=True, text=True, timeout=15,
-    )
-    assert p.returncode == 0, f"curl exit {p.returncode}"
+    p = _curl_retry([
+        "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "-L", "--max-time", "10", "https://haoyanwuying.com/.git/HEAD",
+    ])
+    assert p.returncode == 0, f"curl exit {p.returncode} après 3 retries"
     assert p.stdout.strip() == "404", f"prod expose .git/HEAD ! code={p.stdout!r}"
 
 
 def test_022_prod_blocks_git_config() -> None:
     """TESTS.md #22 — `haoyanwuying.com/.git/config` retourne 404."""
-    p = subprocess.run(
-        ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-         "--max-time", "10", "https://haoyanwuying.com/.git/config"],
-        capture_output=True, text=True, timeout=15,
-    )
-    assert p.returncode == 0
+    p = _curl_retry([
+        "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+        "--max-time", "10", "https://haoyanwuying.com/.git/config",
+    ])
+    assert p.returncode == 0, f"curl exit {p.returncode} après 3 retries"
     assert p.stdout.strip() == "404", f"prod expose .git/config ! code={p.stdout!r}"
 
 

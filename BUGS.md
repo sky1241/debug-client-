@@ -21,6 +21,14 @@
 - **Test**: tests/test_f_diff.py::test_054_diff_detects_fixed_vs_new + test_055 + test_057 (tous passent maintenant).
 - **Regression**: aucune (fix isolé au helper de test).
 
+## BUG-003: test_020/021/022 curl haoyanwuying.com flaky (réseau prod)
+- **Status**: FIXED
+- **Symptom**: 1 fail aléatoire sur 3 (curl exit 28 = timeout) lors d'un forge complet — `tests/test_b_cole_de_danse.py::test_022` notamment.
+- **Root cause**: 3 tests utilisent `curl https://haoyanwuying.com/...` sans retry. GitHub Pages / CDN prod a des micro-glitches qui font timeout.
+- **Fix**: helper `_curl_retry(args, attempts=3, sleep_s=2)` qui retry sur exit non-zéro avec backoff progressif. Appliqué aux 3 tests.
+- **Test**: 5/5 batches consécutifs PASS après fix.
+- **Regression**: aucune.
+
 ## BUG-002: test_011 GitHub API flaky (rate-limit / réseau)
 - **Status**: FIXED
 - **Symptom**: `tests/test_b_cole_de_danse.py::test_011_repo_findable_via_github_api` flip-flop : ~1/3 fail (déjà détecté dans `.forge/flaky.json`).
