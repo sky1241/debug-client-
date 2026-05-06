@@ -126,6 +126,66 @@ def test_081_max_file_size_limit() -> None:
         "limite par-fichier absente (AUDIT_MAX_FILE_SIZE / --max-size)"
 
 
+def test_082_firejail_profile_exists() -> None:
+    """TESTS.md #82 — profil firejail présent."""
+    assert FIREJAIL_PROFILE.is_file(), f"profil firejail manquant: {FIREJAIL_PROFILE}"
+
+def test_083_firejail_blocks_ssh_dir() -> None:
+    """TESTS.md #83 — profil bloque ~/.ssh."""
+    prof = FIREJAIL_PROFILE.read_text()
+    assert re.search(r"blacklist\s+\${HOME}/\.ssh", prof) or \
+           re.search(r"blacklist\s+~/\.ssh", prof), \
+        "blacklist ~/.ssh absente du profil firejail"
+
+def test_084_firejail_blocks_sensitive_dirs() -> None:
+    """TESTS.md #84 — profil bloque .aws, .gnupg, secrets."""
+    prof = FIREJAIL_PROFILE.read_text()
+    sensitive = (".aws", ".gnupg")
+    for s in sensitive:
+        assert re.search(rf"blacklist\s+\${{HOME}}/{re.escape(s)}|blacklist\s+~/{re.escape(s)}", prof), \
+            f"blacklist ~/{s} absente"
+
+def test_085_firejail_supports_net_none() -> None:
+    """TESTS.md #85 — wrapper supporte --net=none via AUDIT_OFFLINE."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"--net=none|--net\s+none", src), \
+        "--net=none absent du wrapper (mode offline cassé)"
+
+def test_086_firejail_seccomp_caps_drop() -> None:
+    """TESTS.md #86 — profil firejail drop privileges (seccomp + caps)."""
+    prof = FIREJAIL_PROFILE.read_text()
+    assert "seccomp" in prof, "seccomp absent du profil firejail"
+    assert re.search(r"caps\.drop\s+all|caps\s+drop", prof), "caps.drop all absent"
+    assert "noroot" in prof, "noroot absent du profil firejail"
+
+def test_087_firejail_rlimit_as_8gib() -> None:
+    """TESTS.md #87-88 — rlimit-as ≥ 8 GiB (fix OOM semgrep)."""
+    prof = FIREJAIL_PROFILE.read_text()
+    m = re.search(r"rlimit-as\s+(\d+)", prof)
+    assert m, "rlimit-as absent du profil"
+    val = int(m.group(1))
+    # 8 GiB = 8589934592, on accepte ≥ 4 GiB (on tolère config plus stricte)
+    assert val >= 4 * 1024 * 1024 * 1024, f"rlimit-as trop bas: {val} (< 4 GiB)"
+
+def test_088_firejail_rlimit_fsize_present() -> None:
+    """TESTS.md #88 — rlimit-fsize cap (anti-DoS disque)."""
+    prof = FIREJAIL_PROFILE.read_text()
+    assert re.search(r"rlimit-fsize\s+\d+", prof), "rlimit-fsize absent (anti-DoS disque)"
+
+def test_089_audit_sandbox_flag_in_wrapper() -> None:
+    """TESTS.md #89 — AUDIT_SANDBOX=1 wrapper switch."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert "AUDIT_SANDBOX" in src, "AUDIT_SANDBOX flag absent"
+    assert re.search(r"firejail.*--profile", src), \
+        "firejail --profile non utilisé"
+
+def test_090_firejail_nonewprivs() -> None:
+    """TESTS.md #90 — profil firejail no-new-privs (anti-escalation)."""
+    prof = FIREJAIL_PROFILE.read_text()
+    assert re.search(r"nonewprivs|no-new-privs", prof), \
+        "nonewprivs absent du profil — anti-escalation manquant"
+
+
 @pytest.fixture(scope="session")
 def rosetta_full_run
 
