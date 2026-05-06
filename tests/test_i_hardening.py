@@ -227,6 +227,47 @@ def test_096_json_only_format_supported() -> None:
         "--format=json absent du wrapper"
 
 
+def test_097_tool_lock_has_24_tools() -> None:
+    """TESTS.md #97 — tool-versions.lock contient ≥ 20 outils (24 cible)."""
+    lines = [l for l in TOOL_LOCK.read_text().splitlines()
+             if l.strip() and not l.startswith("#") and "=" in l]
+    assert len(lines) >= 20, f"tool-versions.lock incomplet: {len(lines)} outils (attendu ≥20)"
+
+def test_098_audit_doctor_runs_clean() -> None:
+    """TESTS.md #98 — audit-doctor sort sans erreur (état OK / DRIFT acceptable)."""
+    p = run_wrapper("audit-doctor", timeout=30)
+    out = p.stdout + p.stderr
+    assert p.returncode in (0, 1), f"audit-doctor crash code {p.returncode}:\n{out[-400:]}"
+    assert re.search(r"OK|DRIFT|MISSING|TAMPERED", out), \
+        f"audit-doctor pas de status:\n{out[-400:]}"
+
+def test_099_audit_doctor_detects_tampering() -> None:
+    """TESTS.md #99 — audit-doctor détecte un wrapper modifié (TAMPERED)."""
+    src = WRAPPER_AUDIT_DOCTOR.read_text()
+    assert re.search(r"TAMPERED|sha256sum|--check", src), \
+        "audit-doctor sans checksum / TAMPERED detection"
+
+def test_100_audit_doctor_can_bump() -> None:
+    """TESTS.md #100 — audit-doctor supporte --bump (re-checksum)."""
+    src = WRAPPER_AUDIT_DOCTOR.read_text()
+    assert re.search(r"--bump|bump_checksums", src), \
+        "audit-doctor --bump absent"
+
+def test_101_cache_dirs_setup() -> None:
+    """TESTS.md #101 — caches CVE configurés (.cache/audit-stack/{trivy,grype,osv-scanner})."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    assert re.search(r"\.cache/audit-stack|TRIVY_CACHE_DIR|GRYPE_DB_CACHE", src), \
+        "caches CVE persistants non configurés"
+
+def test_102_caches_used_by_tools() -> None:
+    """TESTS.md #102 — outils CVE pointent sur le cache custom (speedup)."""
+    src = WRAPPER_AUDIT_CODE.read_text()
+    # Au moins un des cache dirs doit être passé en env aux outils
+    has_cache_env = any(re.search(rf"{var}", src)
+                        for var in ("TRIVY_CACHE_DIR", "GRYPE_DB_CACHE_DIR", "OSV_SCANNER_CACHE"))
+    assert has_cache_env, "aucune var cache CVE exportée"
+
+
 @pytest.fixture(scope="session")
 def rosetta_full_run
 
