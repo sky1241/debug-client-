@@ -26,6 +26,10 @@ FIREJAIL_PROFILE = REPO_ROOT / "firejail" / "claude-audit.profile"
 TOOL_LOCK = REPO_ROOT / "tool-versions.lock"
 
 
+# =========================================================================
+# I.1 — Bash hardening (chunks 70-75)
+# =========================================================================
+
 def test_070_run_tool_script_has_pipefail() -> None:
     """TESTS.md #70 — `run_tool` génère un script avec `set -o pipefail`."""
     src = WRAPPER_AUDIT_CODE.read_text()
@@ -80,11 +84,16 @@ def test_075_rosetta_full_audit_passes(rosetta_full_run: dict) -> None:
     assert len(out_files) >= 18, f"trop peu de .out (attendu ≥18, eu {len(out_files)})"
 
 
+# =========================================================================
+# I.2 — DoS limits (chunks 76-81)
+# =========================================================================
+
 def test_076_rsync_safe_links_for_external_symlinks() -> None:
     """TESTS.md #76 — rsync utilise --safe-links (exclut symlinks pointant hors src)."""
     src = WRAPPER_AUDIT_CODE.read_text()
     assert re.search(r"rsync[^\n]*--safe-links", src), \
         "rsync doit utiliser --safe-links (anti-symlink-attack)"
+
 
 def test_077_rsync_excludes_user_secrets() -> None:
     """TESTS.md #77 — rsync exclut .ssh, .aws, .gnupg via --exclude ou safe-links."""
@@ -98,6 +107,7 @@ def test_077_rsync_excludes_user_secrets() -> None:
             assert "--safe-links" in r or "-l" not in r, \
                 f"rsync archive sans --safe-links détecté: {r[:200]}"
 
+
 def test_078_max_files_limit_enforced() -> None:
     """TESTS.md #78 — AUDIT_MAX_FILES respecté (limite path bomb)."""
     src = WRAPPER_AUDIT_CODE.read_text()
@@ -106,10 +116,12 @@ def test_078_max_files_limit_enforced() -> None:
     assert re.search(r"\$AUDIT_MAX_FILES|\$\{AUDIT_MAX_FILES", src), \
         "AUDIT_MAX_FILES jamais déréférencée — variable orpheline"
 
+
 def test_079_max_total_size_limit_enforced() -> None:
     """TESTS.md #79 — AUDIT_MAX_TOTAL_SIZE_MB respecté (limite repo > 1 GiB)."""
     src = WRAPPER_AUDIT_CODE.read_text()
     assert re.search(r"AUDIT_MAX_TOTAL_SIZE_MB", src), "AUDIT_MAX_TOTAL_SIZE_MB absente"
+
 
 def test_080_find_maxdepth_capped() -> None:
     """TESTS.md #80 — `find` avec `-maxdepth` cap (anti-deep tree)."""
@@ -119,6 +131,7 @@ def test_080_find_maxdepth_capped() -> None:
     has_capped = any("-maxdepth" in f for f in finds)
     assert has_capped, "aucun find n'utilise -maxdepth — risque deep tree"
 
+
 def test_081_max_file_size_limit() -> None:
     """TESTS.md #81 — AUDIT_MAX_FILE_SIZE limite par fichier."""
     src = WRAPPER_AUDIT_CODE.read_text()
@@ -126,9 +139,14 @@ def test_081_max_file_size_limit() -> None:
         "limite par-fichier absente (AUDIT_MAX_FILE_SIZE / --max-size)"
 
 
+# =========================================================================
+# I.3 — Sandbox firejail (chunks 82-90)
+# =========================================================================
+
 def test_082_firejail_profile_exists() -> None:
     """TESTS.md #82 — profil firejail présent."""
     assert FIREJAIL_PROFILE.is_file(), f"profil firejail manquant: {FIREJAIL_PROFILE}"
+
 
 def test_083_firejail_blocks_ssh_dir() -> None:
     """TESTS.md #83 — profil bloque ~/.ssh."""
@@ -136,6 +154,7 @@ def test_083_firejail_blocks_ssh_dir() -> None:
     assert re.search(r"blacklist\s+\${HOME}/\.ssh", prof) or \
            re.search(r"blacklist\s+~/\.ssh", prof), \
         "blacklist ~/.ssh absente du profil firejail"
+
 
 def test_084_firejail_blocks_sensitive_dirs() -> None:
     """TESTS.md #84 — profil bloque .aws, .gnupg, secrets."""
@@ -145,11 +164,13 @@ def test_084_firejail_blocks_sensitive_dirs() -> None:
         assert re.search(rf"blacklist\s+\${{HOME}}/{re.escape(s)}|blacklist\s+~/{re.escape(s)}", prof), \
             f"blacklist ~/{s} absente"
 
+
 def test_085_firejail_supports_net_none() -> None:
     """TESTS.md #85 — wrapper supporte --net=none via AUDIT_OFFLINE."""
     src = WRAPPER_AUDIT_CODE.read_text()
     assert re.search(r"--net=none|--net\s+none", src), \
         "--net=none absent du wrapper (mode offline cassé)"
+
 
 def test_086_firejail_seccomp_caps_drop() -> None:
     """TESTS.md #86 — profil firejail drop privileges (seccomp + caps)."""
@@ -157,6 +178,7 @@ def test_086_firejail_seccomp_caps_drop() -> None:
     assert "seccomp" in prof, "seccomp absent du profil firejail"
     assert re.search(r"caps\.drop\s+all|caps\s+drop", prof), "caps.drop all absent"
     assert "noroot" in prof, "noroot absent du profil firejail"
+
 
 def test_087_firejail_rlimit_as_8gib() -> None:
     """TESTS.md #87-88 — rlimit-as ≥ 8 GiB (fix OOM semgrep)."""
@@ -167,10 +189,12 @@ def test_087_firejail_rlimit_as_8gib() -> None:
     # 8 GiB = 8589934592, on accepte ≥ 4 GiB (on tolère config plus stricte)
     assert val >= 4 * 1024 * 1024 * 1024, f"rlimit-as trop bas: {val} (< 4 GiB)"
 
+
 def test_088_firejail_rlimit_fsize_present() -> None:
     """TESTS.md #88 — rlimit-fsize cap (anti-DoS disque)."""
     prof = FIREJAIL_PROFILE.read_text()
     assert re.search(r"rlimit-fsize\s+\d+", prof), "rlimit-fsize absent (anti-DoS disque)"
+
 
 def test_089_audit_sandbox_flag_in_wrapper() -> None:
     """TESTS.md #89 — AUDIT_SANDBOX=1 wrapper switch."""
@@ -179,6 +203,7 @@ def test_089_audit_sandbox_flag_in_wrapper() -> None:
     assert re.search(r"firejail.*--profile", src), \
         "firejail --profile non utilisé"
 
+
 def test_090_firejail_nonewprivs() -> None:
     """TESTS.md #90 — profil firejail no-new-privs (anti-escalation)."""
     prof = FIREJAIL_PROFILE.read_text()
@@ -186,15 +211,21 @@ def test_090_firejail_nonewprivs() -> None:
         "nonewprivs absent du profil — anti-escalation manquant"
 
 
+# =========================================================================
+# I.4 — Mode offline (chunks 91-93)
+# =========================================================================
+
 def test_091_audit_offline_flag() -> None:
     """TESTS.md #91 — AUDIT_OFFLINE=1 flag dans le wrapper."""
     src = WRAPPER_AUDIT_CODE.read_text()
     assert "AUDIT_OFFLINE" in src, "AUDIT_OFFLINE flag absent"
 
+
 def test_092_run_tool_online_helper() -> None:
     """TESTS.md #92 — helper `run_tool_online` skip outils online en mode offline."""
     src = WRAPPER_AUDIT_CODE.read_text()
     assert re.search(r"run_tool_online", src), "helper run_tool_online absent"
+
 
 def test_093_offline_implies_sandbox() -> None:
     """TESTS.md #93 — mode offline implique sandbox (force --net=none)."""
@@ -206,12 +237,17 @@ def test_093_offline_implies_sandbox() -> None:
     ), "AUDIT_OFFLINE n'active pas la sandbox (cf #93)"
 
 
+# =========================================================================
+# I.5 — JSON output (chunks 94-96)
+# =========================================================================
+
 def test_094_format_all_supported() -> None:
     """TESTS.md #94 — `--format=all` génère .md + .json."""
     src = WRAPPER_AUDIT_CODE.read_text()
     # FORMAT="all" doit être listé comme valeur valide (pas seulement md/json)
     assert re.search(r"md\|json\|all|all\|json\|md|md, json, all", src), \
         "format 'all' non supporté dans le wrapper"
+
 
 def test_095_json_schema_versioned() -> None:
     """TESTS.md #95 — schéma JSON nommé/versionné (claude-audit-code/v1 ou similaire)."""
@@ -220,6 +256,7 @@ def test_095_json_schema_versioned() -> None:
            re.search(r'"schema"', src), \
         "schéma JSON non versionné"
 
+
 def test_096_json_only_format_supported() -> None:
     """TESTS.md #96 — `--format=json` seul supporté (pas de .md généré)."""
     src = WRAPPER_AUDIT_CODE.read_text()
@@ -227,11 +264,16 @@ def test_096_json_only_format_supported() -> None:
         "--format=json absent du wrapper"
 
 
+# =========================================================================
+# I.6 — Version pinning + cache (chunks 97-102)
+# =========================================================================
+
 def test_097_tool_lock_has_24_tools() -> None:
     """TESTS.md #97 — tool-versions.lock contient ≥ 20 outils (24 cible)."""
     lines = [l for l in TOOL_LOCK.read_text().splitlines()
              if l.strip() and not l.startswith("#") and "=" in l]
     assert len(lines) >= 20, f"tool-versions.lock incomplet: {len(lines)} outils (attendu ≥20)"
+
 
 def test_098_audit_doctor_runs_clean() -> None:
     """TESTS.md #98 — audit-doctor sort sans erreur (état OK / DRIFT acceptable)."""
@@ -241,11 +283,13 @@ def test_098_audit_doctor_runs_clean() -> None:
     assert re.search(r"OK|DRIFT|MISSING|TAMPERED", out), \
         f"audit-doctor pas de status:\n{out[-400:]}"
 
+
 def test_099_audit_doctor_detects_tampering() -> None:
     """TESTS.md #99 — audit-doctor détecte un wrapper modifié (TAMPERED)."""
     src = WRAPPER_AUDIT_DOCTOR.read_text()
     assert re.search(r"TAMPERED|sha256sum|--check", src), \
         "audit-doctor sans checksum / TAMPERED detection"
+
 
 def test_100_audit_doctor_can_bump() -> None:
     """TESTS.md #100 — audit-doctor supporte --bump (re-checksum)."""
@@ -253,11 +297,13 @@ def test_100_audit_doctor_can_bump() -> None:
     assert re.search(r"--bump|bump_checksums", src), \
         "audit-doctor --bump absent"
 
+
 def test_101_cache_dirs_setup() -> None:
     """TESTS.md #101 — caches CVE configurés (.cache/audit-stack/{trivy,grype,osv-scanner})."""
     src = WRAPPER_AUDIT_CODE.read_text()
     assert re.search(r"\.cache/audit-stack|TRIVY_CACHE_DIR|GRYPE_DB_CACHE", src), \
         "caches CVE persistants non configurés"
+
 
 def test_102_caches_used_by_tools() -> None:
     """TESTS.md #102 — outils CVE pointent sur le cache custom (speedup)."""
@@ -268,6 +314,10 @@ def test_102_caches_used_by_tools() -> None:
     assert has_cache_env, "aucune var cache CVE exportée"
 
 
+# =========================================================================
+# I.7 — audit-history (chunks 103-106)
+# =========================================================================
+
 def test_103_audit_history_jsonl_format() -> None:
     """TESTS.md #103 — audit-history écrit en JSONL."""
     src = WRAPPER_AUDIT_CODE.read_text()
@@ -275,15 +325,18 @@ def test_103_audit_history_jsonl_format() -> None:
            ".audit-history" in WRAPPER_AUDIT_HISTORY.read_text(), \
         "fichier .audit-history.jsonl jamais référencé"
 
+
 def test_104_audit_history_supports_limit() -> None:
     """TESTS.md #104 — audit-history --limit=N supporté."""
     src = WRAPPER_AUDIT_HISTORY.read_text()
     assert re.search(r"--limit", src), "audit-history --limit absent"
 
+
 def test_105_audit_history_supports_filter() -> None:
     """TESTS.md #105 — audit-history --filter=X supporté."""
     src = WRAPPER_AUDIT_HISTORY.read_text()
     assert re.search(r"--filter", src), "audit-history --filter absent"
+
 
 def test_106_audit_history_handles_corrupt_lines() -> None:
     """TESTS.md #106 — audit-history tolère lignes JSONL corrompues."""
@@ -293,10 +346,15 @@ def test_106_audit_history_handles_corrupt_lines() -> None:
         "audit-history ne gère pas les lignes corrompues"
 
 
+# =========================================================================
+# I.8 — --dry-run (chunks 107-109)
+# =========================================================================
+
 def test_107_dry_run_flag_present() -> None:
     """TESTS.md #107 — --dry-run flag dans le wrapper."""
     src = WRAPPER_AUDIT_CODE.read_text()
     assert re.search(r"--dry-run|DRY_RUN", src), "--dry-run flag absent"
+
 
 def test_108_dry_run_compatible_with_json() -> None:
     """TESTS.md #108 — --dry-run --json génère output structuré."""
@@ -304,6 +362,7 @@ def test_108_dry_run_compatible_with_json() -> None:
     # Doit avoir mention DRY-RUN dans le code (status spécial dans manifest/json)
     assert re.search(r"DRY[-_]RUN|dry.run", src, re.IGNORECASE), \
         "DRY-RUN status absent du code"
+
 
 def test_109_dry_run_skips_execution() -> None:
     """TESTS.md #109 — en --dry-run, run_tool ne lance PAS l'outil."""
@@ -313,17 +372,23 @@ def test_109_dry_run_skips_execution() -> None:
         "DRY_RUN ne gate pas l'exécution"
 
 
+# =========================================================================
+# I.9 — Zipbomb detection (chunks 110-112)
+# =========================================================================
+
 def test_110_zipbomb_ratio_check() -> None:
     """TESTS.md #110 — wrapper calcule un ratio compressed/uncompressed."""
     src = WRAPPER_AUDIT_CODE.read_text()
     assert re.search(r"zipbomb|ratio|compress.*ratio", src, re.IGNORECASE), \
         "détection zipbomb absente"
 
+
 def test_111_zipbomb_threshold_warning() -> None:
     """TESTS.md #111 — seuil ratio (warning ou reject) configuré."""
     src = WRAPPER_AUDIT_CODE.read_text()
     assert re.search(r"AUDIT_ZIPBOMB|RATIO|seuil|threshold", src, re.IGNORECASE), \
         "seuil zipbomb non configuré"
+
 
 def test_112_zipbomb_reject_mode() -> None:
     """TESTS.md #112 — AUDIT_REJECT_ZIPBOMB=1 fait exit 2."""
@@ -332,11 +397,16 @@ def test_112_zipbomb_reject_mode() -> None:
         "AUDIT_REJECT_ZIPBOMB flag absent"
 
 
+# =========================================================================
+# I.10 — Doc + tag (chunks 113-116)
+# =========================================================================
+
 def test_113_readme_has_threat_model() -> None:
     """TESTS.md #113 — README v2 contient threat model."""
     readme = (REPO_ROOT / "README.md").read_text()
     assert re.search(r"threat\s*model", readme, re.IGNORECASE), \
         "README sans 'threat model' — doc v2 incomplete"
+
 
 def test_114_changelog_present() -> None:
     """TESTS.md #114 — CHANGELOG.md présent et non-vide."""
@@ -347,6 +417,7 @@ def test_114_changelog_present() -> None:
     assert re.search(r"^##\s+v?\d", content, re.MULTILINE), \
         "CHANGELOG sans entrée versionnée"
 
+
 def test_115_v2_tag_exists() -> None:
     """TESTS.md #115 — tag v2.x existe dans git."""
     p = subprocess.run(
@@ -356,6 +427,7 @@ def test_115_v2_tag_exists() -> None:
     tags = [t.strip() for t in p.stdout.splitlines() if t.strip()]
     assert any(t.startswith("v2") for t in tags), f"aucun tag v2.x trouvé: {tags}"
 
+
 def test_116_three_modes_validated_in_doc() -> None:
     """TESTS.md #116 — README mentionne les 3 modes (default / sandbox / offline)."""
     readme = (REPO_ROOT / "README.md").read_text()
@@ -363,14 +435,12 @@ def test_116_three_modes_validated_in_doc() -> None:
         assert mode in readme, f"mode {mode} non documenté dans README"
 
 
+# =========================================================================
+# Fixtures dynamiques partagées (1 audit pour I.1#75 et autres dynamiques)
+# =========================================================================
+
 @pytest.fixture(scope="session")
-def rosetta_full_run
-
-# =========================================================================
-# Fixture session-scope (rosetta-stone multi-langages pour test_075 + autres)
-# =========================================================================
-
-(tmp_path_factory) -> dict:
+def rosetta_full_run(tmp_path_factory) -> dict:
     """Lance UN audit-code sur un rosetta-stone multi-langages."""
     repo = tmp_path_factory.mktemp("rosetta-I") / "repo"
     repo.mkdir()
