@@ -161,3 +161,9 @@ def test_037_phpstan_detects_undefined_var(rosetta_audit: Path) -> None:
     """TESTS.md #37 — phpstan détecte la variable PHP indéfinie."""
     out = (rosetta_audit / "phpstan.out").read_text(errors="ignore")
     assert "undef" in out.lower() or "Variable" in out, f"phpstan rien:\n{out[:400]}"
+
+
+def test_038_brakeman_detects_warnings(rosetta_audit: Path) -> None:
+    """TESTS.md #38 — brakeman détecte au moins 1 warning sécurité."""
+    out = (rosetta_audit / "brakeman.out").read_text(errors="ignore")
+    assert re.search(r"Security Warnings: [1-9]", out), f"brakeman 0 warning:\n{out[:400]}"
