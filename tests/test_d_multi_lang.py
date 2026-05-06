@@ -232,3 +232,11 @@ def test_047_clamav_detects_eicar(rosetta_audit: Path) -> None:
     out = (rosetta_audit / "clamav.out").read_text(errors="ignore")
     assert "Eicar-Test-Signature" in out, f"clamav pas d'EICAR:\n{out[:500]}"
     assert "FOUND" in out, f"clamav 'FOUND' absent:\n{out[:500]}"
+
+
+def test_048_trivy_deps_detects_lockfile_cves(rosetta_audit: Path) -> None:
+    """TESTS.md #48 — trivy-deps détecte CVE dans lockfiles (Cargo/Gemfile/npm/pip)."""
+    out = (rosetta_audit / "trivy-deps.out").read_text(errors="ignore")
+    # Au moins 1 Total non-zéro avec HIGH/CRITICAL/MEDIUM > 0
+    matches = re.findall(r"Total: ([1-9]\d*)", out)
+    assert matches, f"trivy-deps pas de Total non-zéro:\n{out[:600]}"
