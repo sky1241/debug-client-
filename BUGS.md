@@ -21,6 +21,27 @@
 - **Test**: tests/test_f_diff.py::test_054_diff_detects_fixed_vs_new + test_055 + test_057 (tous passent maintenant).
 - **Regression**: aucune (fix isolé au helper de test).
 
+## BUG-005: test_083 firejail_blocks_ssh_dir non branché (regex laxe)
+- **Status**: FIXED
+- **Symptom**: sabotage par commentage de `blacklist ${HOME}/.ssh` dans le profil firejail → test PASS au lieu de FAIL → branchage fictif.
+- **Root cause**: regex `r"blacklist\s+\${HOME}/\.ssh"` matchait aussi `# blacklist ${HOME}/.ssh` (pas d'ancrage début de ligne).
+- **Fix**: pattern strict `r"^\s*blacklist\s+(\$\{HOME\}|~)/\.ssh\s*$"` avec `re.MULTILINE`. Sabotage par commentage → test FAIL confirmé.
+- **Test**: tests/test_i_hardening.py::test_083_firejail_blocks_ssh_dir.
+- **Regression**: aucune.
+
+## BUG-006: 4 autres tests avec regex .* permissifs
+- **Status**: FIXED
+- **Symptom**: tests qui PASSENT par construction (regex match presque tout) — révélés par audit niveau 1 (note 12/20).
+- **Root cause**: utilisation de `.*` avec `re.DOTALL` dans les patterns sur sources de wrappers (test_070, test_093, test_136, test_167, test_169).
+- **Fix**:
+  - test_070 → exiger `printf '...set -o pipefail...' > "$script_file"` complet
+  - test_093 → exiger `if [ "$AUDIT_OFFLINE" = "1" ] ... AUDIT_SANDBOX=1`
+  - test_136 → exiger `::1`/`fe80::` ET flag `-6` sur ping/nmap (au lieu de juste `:`)
+  - test_167 → exiger `if AUDIT_SANDBOX=1 then firejail` ET `firejail --profile=`
+  - test_169 → exiger valeurs par défaut explicites pour les 3 vars
+- **Test**: 5 tests resserrés, 85/85 PASS sur sections I+K+M.
+- **Regression**: aucune (sabotage confirme désormais le branchage réel).
+
 ## BUG-004: test_040 cargo-audit RUSTSEC flaky (advisory-db git fetch)
 - **Status**: FIXED
 - **Symptom**: `tests/test_d_multi_lang.py::test_040` fail intermittent : `couldn't fetch advisory database: git operation failed`. La sortie contient l'erreur réseau au lieu du RUSTSEC attendu.

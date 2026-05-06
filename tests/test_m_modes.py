@@ -83,10 +83,14 @@ def test_167_mode_sandbox_supported_by_wrapper() -> None:
     config firejail spécifique). On valide la présence des branches code.
     """
     src = (BIN_DIR / "client-audit-code").read_text()
-    # Le wrapper doit avoir un branch AUDIT_SANDBOX=1 → firejail prefix
-    assert re.search(r"AUDIT_SANDBOX.*=.*1.*firejail", src, re.DOTALL) or \
-           re.search(r"firejail.*--profile", src), \
-        "branche AUDIT_SANDBOX=1 → firejail absente"
+    # Pattern strict : `if [ "$AUDIT_SANDBOX" = "1" ]; then ... firejail ... --profile ...`
+    has_branch = bool(re.search(
+        r'if\s+\[\s+"\$AUDIT_SANDBOX"\s*=\s*"1"\s+\][^{]*?firejail',
+        src, re.DOTALL,
+    ))
+    has_profile = bool(re.search(r"firejail[^\n]*--profile=", src))
+    assert has_branch, "pas de branche conditionnelle 'if AUDIT_SANDBOX=1 then firejail'"
+    assert has_profile, "firejail invoqué sans --profile= (config sandbox absente)"
 
 
 def test_168_mode_offline_skips_online_tools(audit_offline: dict) -> None:
@@ -107,8 +111,10 @@ def test_169_combo_modes_supported() -> None:
     """
     src = (BIN_DIR / "client-audit-code").read_text()
     for var in ("AUDIT_PARALLEL", "AUDIT_SANDBOX", "AUDIT_OFFLINE"):
-        assert var in src, f"{var} absent du wrapper"
-    # Les 3 doivent être indépendamment switchables (pas de hardcode incompatible)
-    assert re.search(r'AUDIT_OFFLINE.*=.*"1".*AUDIT_SANDBOX', src, re.DOTALL) or \
-           re.search(r'AUDIT_OFFLINE.*=.*"?1"?.*\n.*AUDIT_SANDBOX', src, re.DOTALL), \
-        "AUDIT_OFFLINE=1 ne combine pas avec AUDIT_SANDBOX (cf #93 / #169)"
+        # Doit être déclaré avec valeur par défaut explicite (pas juste mentionné)
+        assert re.search(rf'{var}="\$\{{?{var}:?-[01]', src), \
+            f"{var} sans valeur par défaut explicite (var orpheline)"
+    # OFFLINE=1 doit déclencher SANDBOX=1 (ligne d'assignation à proximité immédiate du test)
+    pattern = r'if\s+\[\s+"\$AUDIT_OFFLINE"\s*=\s*"1"[^{]*?AUDIT_SANDBOX=1'
+    assert re.search(pattern, src, re.DOTALL), \
+        "AUDIT_OFFLINE=1 ne force PAS explicitement AUDIT_SANDBOX=1 (fix #93/#169)"

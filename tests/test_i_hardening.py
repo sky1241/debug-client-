@@ -33,10 +33,10 @@ TOOL_LOCK = REPO_ROOT / "tool-versions.lock"
 def test_070_run_tool_script_has_pipefail() -> None:
     """TESTS.md #70 — `run_tool` génère un script avec `set -o pipefail`."""
     src = WRAPPER_AUDIT_CODE.read_text()
-    # Le wrapper write un script intermediaire avec pipefail explicite
-    assert re.search(r"set -o pipefail.*\$cmd", src, re.DOTALL) or \
-           re.search(r"pipefail\\n%s\\n", src), \
-        "le script généré par run_tool doit inclure 'set -o pipefail'"
+    # Le wrapper utilise printf pour générer un script intermédiaire avec pipefail
+    # Pattern strict : printf '#!/bin/bash\nset -o pipefail\n%s\n' "$cmd" > "$script_file"
+    assert re.search(r"printf\s+['\"][^'\"]*set -o pipefail[^'\"]*['\"][^>]*>\s*\"?\$\{?script_file", src), \
+        "run_tool doit générer un script avec 'set -o pipefail' explicite (printf -> script_file)"
 
 
 def test_071_wait_propagates_exit_code() -> None:
@@ -149,11 +149,11 @@ def test_082_firejail_profile_exists() -> None:
 
 
 def test_083_firejail_blocks_ssh_dir() -> None:
-    """TESTS.md #83 — profil bloque ~/.ssh."""
+    """TESTS.md #83 — profil bloque ~/.ssh (ligne non commentée)."""
     prof = FIREJAIL_PROFILE.read_text()
-    assert re.search(r"blacklist\s+\${HOME}/\.ssh", prof) or \
-           re.search(r"blacklist\s+~/\.ssh", prof), \
-        "blacklist ~/.ssh absente du profil firejail"
+    # Multiline + ligne pas commentée (anti-sabotage par #)
+    assert re.search(r"^\s*blacklist\s+(\$\{HOME\}|~)/\.ssh\s*$", prof, re.MULTILINE), \
+        "blacklist ~/.ssh absente ou commentée du profil firejail"
 
 
 def test_084_firejail_blocks_sensitive_dirs() -> None:
@@ -230,11 +230,11 @@ def test_092_run_tool_online_helper() -> None:
 def test_093_offline_implies_sandbox() -> None:
     """TESTS.md #93 — mode offline implique sandbox (force --net=none)."""
     src = WRAPPER_AUDIT_CODE.read_text()
-    # Heuristique : AUDIT_OFFLINE=1 doit déclencher AUDIT_SANDBOX=1 ou --net=none
-    assert re.search(
-        r"AUDIT_OFFLINE.*AUDIT_SANDBOX|AUDIT_OFFLINE.*--net=none|AUDIT_OFFLINE.*=.*1.*\n.*AUDIT_SANDBOX",
-        src, re.DOTALL,
-    ), "AUDIT_OFFLINE n'active pas la sandbox (cf #93)"
+    # Pattern strict : `if [ "$AUDIT_OFFLINE" = "1" ] && ...; then ... AUDIT_SANDBOX=1`
+    # On exige le test conditionnel + l'assignation AUDIT_SANDBOX=1 sur ≤6 lignes après
+    pattern = r'if\s+\[\s+"\$AUDIT_OFFLINE"\s*=\s*"1"\s+\][^{]*?AUDIT_SANDBOX=1'
+    assert re.search(pattern, src, re.DOTALL), \
+        "AUDIT_OFFLINE=1 ne force PAS explicitement AUDIT_SANDBOX=1 (fix #93)"
 
 
 # =========================================================================

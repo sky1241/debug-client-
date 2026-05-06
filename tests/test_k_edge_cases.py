@@ -172,11 +172,16 @@ def test_135_audit_fingerprint_ipv6_link_local() -> None:
 
 
 def test_136_audit_fingerprint_ipv6_pattern_in_source() -> None:
-    """TESTS.md #136 — audit-fingerprint a une regex IPv6 ou flag -6 dans le source."""
+    """TESTS.md #136 — audit-fingerprint supporte explicitement IPv6 (regex + flag -6)."""
     src = WRAPPER_AUDIT_FINGERPRINT.read_text()
-    # Pattern IPv6 (::, ou groupes hex) ou flag -6 explicite
-    has_ipv6 = bool(re.search(r":|-6|IPv6", src, re.IGNORECASE))
-    assert has_ipv6, "audit-fingerprint sans support IPv6 — fix #136 manquant"
+    # Patterns stricts : double-colon littéral (::1, fe80::) + flag -6 sur ping/nmap
+    # "::" seul n'est pas suffisant (peut apparaître dans bash :: opérateurs), exiger
+    # un contexte IPv6 reconnaissable.
+    has_ipv6_test = bool(re.search(r'\[\[\s*"\$TARGET"\s*==\s*::1', src)) or \
+                    bool(re.search(r'fe80::', src))
+    has_ipv6_flag = bool(re.search(r"-6\s+(-c|-sV|--top-ports)", src))
+    assert has_ipv6_test, "audit-fingerprint ne reconnaît pas explicitement ::1 / fe80:: dans une condition"
+    assert has_ipv6_flag, "audit-fingerprint n'utilise pas le flag -6 (ping/nmap) pour les IPv6"
 
 
 # =========================================================================
